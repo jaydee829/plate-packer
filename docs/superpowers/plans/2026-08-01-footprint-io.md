@@ -100,9 +100,7 @@ def test_nonfinite_triangles_are_dropped(corrupt):
 
 def test_all_nonfinite_mesh_raises():
     nan = float("nan")
-    mesh = trimesh.Trimesh(
-        vertices=[[nan, nan, nan]] * 3, faces=[[0, 1, 2]], process=False
-    )
+    mesh = trimesh.Trimesh(vertices=[[nan, nan, nan]] * 3, faces=[[0, 1, 2]], process=False)
     with pytest.raises(ValueError, match="no finite triangles"):
         extract_footprint(mesh, RES)
 
@@ -138,9 +136,7 @@ import numpy as np
 import trimesh
 
 
-def extract_footprint(
-    mesh: trimesh.Trimesh, res_mm: float
-) -> tuple[np.ndarray, np.ndarray, dict]:
+def extract_footprint(mesh: trimesh.Trimesh, res_mm: float) -> tuple[np.ndarray, np.ndarray, dict]:
     """Return (mask, origin_mm, stats). Mask is uint8 {0,1}, row 0 = min Y,
     canvas is the exact triangle bounds. origin_mm = XY of pixel (0,0)."""
     t0 = time.perf_counter()
@@ -776,7 +772,9 @@ def _discover(paths: list[Path]) -> list[Path]:
 @app.command()
 def footprints(
     paths: list[Path] = typer.Argument(..., exists=True),
-    footprints_dir: Path = typer.Option(None, help="cache dir (default: config.toml or ./footprints)"),
+    footprints_dir: Path = typer.Option(
+        None, help="cache dir (default: config.toml or ./footprints)"
+    ),
     force: bool = typer.Option(False, help="regenerate even if a current doc exists"),
 ):
     """Generate footprint cache documents for STL/OBJ files."""
@@ -799,9 +797,7 @@ def footprints(
         except Exception as e:  # per-file failures never halt the batch
             failures.append((f, str(e)))
             typer.echo(f"  {f.name}: FAILED ({e})")
-    typer.echo(
-        f"{written} written, {skipped} skipped, {len(failures)} failed -> {out_dir}"
-    )
+    typer.echo(f"{written} written, {skipped} skipped, {len(failures)} failed -> {out_dir}")
     if failures:
         raise typer.Exit(code=1)
 ```

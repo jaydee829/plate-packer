@@ -21,51 +21,19 @@ import numpy as np
 import trimesh
 from scipy.signal import fftconvolve
 
+from plate_packer.footprint import extract_footprint as _extract
+
 PLATE_MM = (200.0, 130.0)  # benchmark plate size (typical mid-size MSLA)
 
 
-def extract_footprint(mesh: trimesh.Trimesh, res_mm: float, spacing_mm: float):
-    """Return (mask, origin_mm, stats). Mask is uint8 {0,1}, row 0 = min Y."""
-    t0 = time.perf_counter()
-    tris = mesh.triangles  # (n, 3, 3) mm
-    # Real-world pre-supported STLs can contain NaN vertices (seen in the wild
-    # at ~0.015% of triangles); they poison the bounds and canvas size.
-    finite = np.isfinite(tris).all(axis=(1, 2))
-    n_bad = int((~finite).sum())
-    if n_bad:
-        tris = tris[finite]
-    if len(tris) == 0:
-        raise ValueError("mesh has no finite triangles")
-    tris_xy = tris[:, :, :2]
-    # Pad the canvas by the dilation radius so the spacing margin isn't
-    # clipped at the borders; origin shifts accordingly.
-    r = max(1, round(spacing_mm / res_mm)) if spacing_mm > 0 else 0
-    origin = tris_xy.reshape(-1, 2).min(axis=0) - r * res_mm
-    size_px = np.ceil((tris_xy.reshape(-1, 2).max(axis=0) - origin) / res_mm).astype(int) + 1 + r
-
-    mask = np.zeros((size_px[1], size_px[0]), dtype=np.uint8)
-    tris_px = np.round((tris_xy - origin) / res_mm).astype(np.int32)
-    # One fillPoly call per triangle: a single multi-polygon call uses the
-    # even-odd rule, so overlapping triangles cancel instead of unioning.
-    for tri in tris_px:
-        cv2.fillConvexPoly(mask, tri, 1)
-    t_raster = time.perf_counter() - t0
-
-    if r > 0:
+def extract_footprint(mesh, res_mm, spacing_mm):
+    mask, origin, stats = _extract(mesh, res_mm)
+    if spacing_mm > 0:
+        r = max(1, round(spacing_mm / res_mm))
+        mask = np.pad(mask, r)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
         mask = cv2.dilate(mask, kernel)
-
-    stats = {
-        "triangles": len(mesh.triangles),
-        "dropped_nonfinite": n_bad,
-        "z_height_mm": float(tris[:, :, 2].max() - tris[:, :, 2].min()),
-        "footprint_mm": tuple(
-            (tris_xy.reshape(-1, 2).max(axis=0) - tris_xy.reshape(-1, 2).min(axis=0)).round(1)
-        ),
-        "mask_px": mask.shape,
-        "coverage": float(mask.mean()),
-        "raster_s": t_raster,
-    }
+        origin = origin - r * res_mm
     return mask, origin, stats
 
 
