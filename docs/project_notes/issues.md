@@ -12,6 +12,12 @@ This file tracks work history and ticket references.
 
 ## Log
 
+### 2026-08-01 - SETUP: Tooling, prototype, and GitHub publish
+- **Status**: Completed
+- **Description**: uv-managed pyproject + ruff + pytest; footprint-extraction prototype with tests (2 rasterization bugs found/fixed, see bugs.md); published public repo with MIT license and GitHub Actions CI.
+- **URL**: https://github.com/jaydee829/plate-packer
+- **Notes**: CI matrix is Python 3.11/3.14 with opencv-python-headless (avoids libGL on Linux runners). Awaiting real STLs in example_stls/ (gitignored — copyrighted content).
+
 ### 2026-08-01 - INIT: Project bootstrap
 - **Status**: Completed
 - **Description**: Created CLAUDE.md from the seed design doc and initialized the project memory system (docs/project_notes/ + memory protocols in CLAUDE.md, GEMINI.md, AGENTS.md).

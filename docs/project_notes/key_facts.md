@@ -12,8 +12,9 @@ This file tracks important project configuration, constants, and environment det
 - **Setup**: No package config yet (pre-code). Test STL inputs go in `example_stls/`.
 
 ## Tooling & Distribution (decided 2026-08-01)
-- **Open source**: project will be published on GitHub.
-- **CI**: GitHub Actions (test + lint on push/PR) once the repo is on GitHub.
+- **Repo**: https://github.com/jaydee829/plate-packer (public, MIT license)
+- **CI**: GitHub Actions (`.github/workflows/ci.yml`) — ruff check + format-check + pytest on Python 3.11 and 3.14, on push to main and PRs.
+- **Never commit `example_stls/`** — pre-supported Patreon/Kickstarter models are copyrighted third-party content (gitignored).
 - **Package/env management**: `uv` (pyproject.toml-based). The current pip-created `.venv` is interim scaffolding — migrate to `uv` when the package is formalized.
 - **Lint/format**: `ruff` (linter + formatter), enforced in CI.
 
