@@ -1,11 +1,11 @@
 """plate-packer CLI (typer). First subcommand: footprints (generate cache docs)."""
 
-import tomllib
 from pathlib import Path
 
 import trimesh
 import typer
 
+from plate_packer.config import load_config
 from plate_packer.footprint import extract_footprint
 from plate_packer.footprint_io import (
     CANONICAL_RES_MM,
@@ -23,16 +23,6 @@ def main():
 
 
 _EXTENSIONS = {".stl", ".obj"}
-
-
-def _default_footprints_dir() -> Path:
-    cfg = Path("config.toml")
-    if cfg.exists():
-        data = tomllib.loads(cfg.read_text(encoding="utf-8"))
-        value = data.get("paths", {}).get("footprints_dir")
-        if value:
-            return Path(value)
-    return Path("footprints")
 
 
 def _discover(paths: list[Path]) -> list[Path]:
@@ -55,7 +45,7 @@ def footprints(
     force: bool = typer.Option(False, help="regenerate even if a current doc exists"),
 ):
     """Generate footprint cache documents for STL/OBJ files."""
-    out_dir = footprints_dir or _default_footprints_dir()
+    out_dir = footprints_dir or load_config(None).footprints_dir
     files = _discover(paths)
     if not files:
         typer.echo("no STL/OBJ files found")
