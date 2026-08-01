@@ -9,9 +9,7 @@ import math
 import cv2
 import numpy as np
 
-from plate_packer.footprint_io import FootprintDoc
-
-_RATIO_TOL = 1e-6
+from plate_packer.footprint_io import RES_RATIO_TOL, FootprintDoc
 
 
 def conservative_downsample(mask: np.ndarray, factor: int) -> np.ndarray:
@@ -51,7 +49,7 @@ def prepare_mask(
     pixel (0,0). Dilation pads all sides, shifting it by -r_px*res per axis;
     conservative downsample keeps blocks anchored at pixel 0 (no shift)."""
     ratio = working_res_mm / doc.res_mm_per_px
-    if abs(ratio - round(ratio)) > _RATIO_TOL or ratio < 1:
+    if abs(ratio - round(ratio)) > RES_RATIO_TOL or ratio < 1:
         raise ValueError(
             f"working res {working_res_mm} must be an integer multiple "
             f"of canonical res {doc.res_mm_per_px}"

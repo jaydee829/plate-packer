@@ -4,9 +4,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from plate_packer.footprint_io import CANONICAL_RES_MM
-
-_RATIO_TOL = 1e-6
+from plate_packer.footprint_io import CANONICAL_RES_MM, RES_RATIO_TOL
 
 
 @dataclass(frozen=True)
@@ -50,7 +48,7 @@ def _validate(cfg: PackConfig) -> None:
     if cfg.working_res_mm <= 0:
         raise ValueError("packing.working_res_mm must be positive")
     ratio = cfg.working_res_mm / CANONICAL_RES_MM
-    if abs(ratio - round(ratio)) > _RATIO_TOL or ratio < 1:
+    if abs(ratio - round(ratio)) > RES_RATIO_TOL or ratio < 1:
         raise ValueError(
             f"packing.working_res_mm {cfg.working_res_mm} must be an integer multiple "
             f"of canonical res {CANONICAL_RES_MM}"

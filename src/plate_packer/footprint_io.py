@@ -17,6 +17,8 @@ import cv2
 import numpy as np
 
 CANONICAL_RES_MM = 0.05
+# Float tolerance for "working res is an integer multiple of canonical res" checks.
+RES_RATIO_TOL = 1e-6
 SCHEMA_VERSION = 1
 _GENERATOR = f"plate-packer {version('plate-packer')}"
 

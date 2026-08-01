@@ -93,6 +93,8 @@ def _crop_to_content_bbox(binary: np.ndarray) -> tuple[np.ndarray, int, int]:
 
     Returns (cropped, r0, c0) where r0, c0 are the offsets of the crop.
     """
+    if not binary.any():
+        raise ValueError("cannot crop an empty mask")
     rows, cols = binary.any(axis=1), binary.any(axis=0)
     r0, c0 = int(np.argmax(rows)), int(np.argmax(cols))
     cropped = binary[
