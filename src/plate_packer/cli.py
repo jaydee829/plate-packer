@@ -16,6 +16,12 @@ from plate_packer.footprint_io import (
 
 app = typer.Typer(no_args_is_help=True)
 
+
+@app.callback()
+def main():
+    """plate-packer: pack pre-supported resin models onto build plates."""
+
+
 _EXTENSIONS = {".stl", ".obj"}
 
 

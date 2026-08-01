@@ -78,3 +78,15 @@ def test_footprints_no_files_found_message(tmp_path):
     result = runner.invoke(app, ["footprints", str(empty_dir), "--footprints-dir", str(out)])
     assert result.exit_code == 0
     assert "no STL/OBJ files found" in result.output
+
+
+def test_footprints_subcommand_works_without_local_footprints_dir(stl_tree, tmp_path, monkeypatch):
+    """Regression: with a single-command typer app, 'footprints' was parsed as a
+    path argument and only worked when ./footprints happened to exist locally."""
+    workdir = tmp_path / "clean-cwd"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    out = tmp_path / "fp"
+    result = runner.invoke(app, ["footprints", str(stl_tree), "--footprints-dir", str(out)])
+    assert result.exit_code == 0
+    assert "2 written" in result.output
