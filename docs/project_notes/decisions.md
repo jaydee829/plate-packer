@@ -176,6 +176,24 @@ This file documents key architectural decisions, their context, and trade-offs.
 - Pros: one cached footprint serves any spacing/resolution config; contract untouched; cache is pure function of file content.
 - Trade-offs: extraction output is no longer directly packable — a thin load step (dilate + optional downsample) sits between cache and packer.
 
+### ADR-010: spacing_mm is the true inter-piece gap; per-piece dilation = spacing/2 (2026-08-01)
+
+**Context:** The packer packs dilated masks against dilated occupancy, so dilating each
+piece by d enforces a 2d gap between true footprints. Dilating by the full spacing
+silently doubled the user's requested gap.
+
+**Decision:** `spacing_mm` (config) is the minimum gap between placed pieces. Per-piece
+dilation radius = `ceil((spacing_mm/2) / working_res_mm)` px (`loading.dilation_radius_px`).
+Side effect (accepted): pieces keep >= spacing/2 clearance from plate edges because the
+dilated mask must fit on-plate; `edge_margin_mm` adds an explicit dead band on top.
+
+**Alternatives:** Keep full-spacing dilation and document gap = 2x spacing -> rejected,
+violates least surprise. Dilate candidate only, keep occupancy undilated -> rejected,
+requires storing both mask variants and changes packer internals for no precision gain.
+
+**Consequences:** Halved dilation radii vs. the pre-ADR behavior; prepare_mask returns
+(mask, origin_mm) so export can compose exact transforms.
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal

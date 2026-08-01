@@ -31,9 +31,6 @@ This file tracks important project configuration, constants, and environment det
 ## Deferred Hardening (do when ADR-008 escalates extraction to multiprocessing)
 - `footprint_io.save_doc` uses a deterministic tmp filename (`<sha>.json.tmp`). Two workers racing on the same input could collide mid-write. Switch to a process-unique tmp name (tempfile.mkstemp-style, same directory) BEFORE parallelizing extraction. (PR #1 review, 2026-08-01 — not a live issue while extraction is serial.)
 
-## Export-Milestone TODO (from footprint-io final review, 2026-08-01)
-- `prepare_mask` returns only the mask and discards the origin shift its dilation introduces (pads all sides → origin moves by −r·working_res; ragged-edge downsample pads bottom/right only → origin unchanged). The export milestone must have `prepare_mask` return the origin offset rather than callers re-deriving it (see the shim in `scripts/extract_footprint.py` for intended semantics).
-
 ## Domain Constants & Conventions
 - **Raster resolution**: ~0.05–0.1 mm/px, config knob; tune empirically (0.1 mm/px on a ~200×130 mm plate → ~2000×1300 masks).
 - **Rotation steps**: ~36–72, config knob.
