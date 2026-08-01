@@ -1,5 +1,6 @@
 """plate-packer CLI (typer). Subcommands: footprints (generate cache docs), pack."""
 
+import gc
 import math
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from plate_packer.export import (
     export_plates,
     load_piece_mesh,
     placement_transform,
+    read_stl_triangles,
     verify_plate,
 )
 from plate_packer.footprint import extract_footprint
@@ -164,23 +166,9 @@ def pack_command(
         )
     plate_files = export_plates(piece_files, placements, transforms, out_dir)
 
-    # Stage 5: self-check (subset assertion per plate).
-    if not no_verify:
-        occs = [np.zeros(plate_shape, np.uint8) for _ in plate_files]
-        for pl in placements:
-            rm, _ = rotate_mask(masks[pl.piece], pl.angle)
-            occs[pl.plate][pl.row : pl.row + rm.shape[0], pl.col : pl.col + rm.shape[1]] |= rm
-        failed = 0
-        for path, occ in zip(plate_files, occs, strict=True):
-            n = verify_plate(load_piece_mesh(path), occ, res, cfg.plate_mm, cfg.spacing_mm)
-            status = "ok" if n == 0 else f"FAILED ({n} px outside prediction)"
-            typer.echo(f"  verify {path.name}: {status}")
-            failed += n > 0
-        if failed:
-            typer.echo(f"self-check failed on {failed} plate(s); output kept for inspection")
-            raise typer.Exit(code=1)
-
-    # Stage 6: report.
+    # Stage 5: report, built (and written) BEFORE verification so the mask
+    # arrays can be freed ahead of reloading multi-hundred-MB merged plates,
+    # and so the report survives a verify failure for inspection.
     usable = plate_shape[0] * plate_shape[1] - int(plate_mask.sum())
     lines = []
     for idx, path in enumerate(plate_files):
@@ -199,5 +187,26 @@ def pack_command(
             )
     lines.append(f"{len(piece_files)} pieces -> {len(plate_files)} plate(s)")
     report = "\n".join(lines)
-    typer.echo(report)
     (Path(out_dir) / "report.txt").write_text(report + "\n", encoding="utf-8")
+
+    # Stage 6: self-check (subset assertion per plate).
+    if not no_verify:
+        occs = [np.zeros(plate_shape, np.uint8) for _ in plate_files]
+        for pl in placements:
+            rm, _ = rotate_mask(masks[pl.piece], pl.angle)
+            occs[pl.plate][pl.row : pl.row + rm.shape[0], pl.col : pl.col + rm.shape[1]] |= rm
+        # Free everything the verify loop doesn't need; the reloaded plate
+        # triangle soups are the peak allocation of the whole run.
+        del masks
+        gc.collect()
+        failed = 0
+        for path, occ in zip(plate_files, occs, strict=True):
+            n = verify_plate(read_stl_triangles(path), occ, res, cfg.plate_mm, cfg.spacing_mm)
+            status = "ok" if n == 0 else f"FAILED ({n} px outside prediction)"
+            typer.echo(f"  verify {path.name}: {status}")
+            failed += n > 0
+        if failed:
+            typer.echo(f"self-check failed on {failed} plate(s); output kept for inspection")
+            raise typer.Exit(code=1)
+
+    typer.echo(report)
