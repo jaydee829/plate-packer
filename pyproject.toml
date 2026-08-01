@@ -1,0 +1,42 @@
+[project]
+name = "plate-packer"
+version = "0.1.0"
+description = "Packs pre-supported resin (MSLA) models onto build plates using true irregular footprints with free rotation, minimizing plate count"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "trimesh>=4.5",
+    "numpy>=2.0",
+    "scipy>=1.14",
+    "opencv-python-headless>=4.10",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[tool.uv]
+# Pre-package phase: uv manages the env/deps only. Flip to a src/ package
+# layout when the v1 CLI is implemented.
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

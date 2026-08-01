@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Tool output
+footprints/
+plate_*.stl
+
+# Input models — pre-supported Patreon/Kickstarter STLs are copyrighted
+# third-party content and must never be committed to the public repo.
+example_stls/
