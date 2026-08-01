@@ -22,6 +22,7 @@ import trimesh
 from scipy.signal import fftconvolve
 
 from plate_packer.footprint import extract_footprint as _extract
+from plate_packer.loading import dilate
 
 PLATE_MM = (200.0, 130.0)  # benchmark plate size (typical mid-size MSLA)
 
@@ -30,9 +31,7 @@ def extract_footprint(mesh, res_mm, spacing_mm):
     mask, origin, stats = _extract(mesh, res_mm)
     if spacing_mm > 0:
         r = max(1, round(spacing_mm / res_mm))
-        mask = np.pad(mask, r)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
-        mask = cv2.dilate(mask, kernel)
+        mask = dilate(mask, r)
         origin = origin - r * res_mm
     return mask, origin, stats
 
