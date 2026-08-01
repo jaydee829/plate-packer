@@ -46,6 +46,26 @@ def test_box_mask_is_solid(extents, spacing):
     assert mask.mean() > 0.97
 
 
+@pytest.mark.parametrize(
+    "corrupt",
+    [pytest.param(float("nan"), id="nan-vertex"), pytest.param(float("inf"), id="inf-vertex")],
+)
+def test_nonfinite_triangles_are_dropped(corrupt):
+    """NaN/inf vertices (seen in real pre-supported STLs) must not poison the mask."""
+    import numpy as np
+
+    mesh = trimesh.creation.box(extents=(20, 10, 5))
+    vertices = np.vstack([mesh.vertices, [[corrupt, corrupt, corrupt]] * 3])
+    n = len(mesh.vertices)
+    faces = np.vstack([mesh.faces, [[n, n + 1, n + 2]]])
+    corrupted = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+
+    mask, _origin, stats = extract_footprint(corrupted, RES, 0.0)
+    assert stats["dropped_nonfinite"] == 1
+    assert stats["z_height_mm"] == pytest.approx(5.0)
+    assert mask.mean() > 0.97
+
+
 def test_disjoint_scene_masks_do_not_cancel():
     """Two stacked boxes (same shadow) must still produce a solid union."""
     a = trimesh.creation.box(extents=(10, 10, 2))

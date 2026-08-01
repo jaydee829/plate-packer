@@ -27,7 +27,16 @@ PLATE_MM = (200.0, 130.0)  # benchmark plate size (typical mid-size MSLA)
 def extract_footprint(mesh: trimesh.Trimesh, res_mm: float, spacing_mm: float):
     """Return (mask, origin_mm, stats). Mask is uint8 {0,1}, row 0 = min Y."""
     t0 = time.perf_counter()
-    tris_xy = mesh.triangles[:, :, :2]  # (n, 3, 2) mm
+    tris = mesh.triangles  # (n, 3, 3) mm
+    # Real-world pre-supported STLs can contain NaN vertices (seen in the wild
+    # at ~0.015% of triangles); they poison the bounds and canvas size.
+    finite = np.isfinite(tris).all(axis=(1, 2))
+    n_bad = int((~finite).sum())
+    if n_bad:
+        tris = tris[finite]
+    if len(tris) == 0:
+        raise ValueError("mesh has no finite triangles")
+    tris_xy = tris[:, :, :2]
     # Pad the canvas by the dilation radius so the spacing margin isn't
     # clipped at the borders; origin shifts accordingly.
     r = max(1, round(spacing_mm / res_mm)) if spacing_mm > 0 else 0
@@ -48,7 +57,8 @@ def extract_footprint(mesh: trimesh.Trimesh, res_mm: float, spacing_mm: float):
 
     stats = {
         "triangles": len(mesh.triangles),
-        "z_height_mm": float(mesh.bounds[1][2] - mesh.bounds[0][2]),
+        "dropped_nonfinite": n_bad,
+        "z_height_mm": float(tris[:, :, 2].max() - tris[:, :, 2].min()),
         "footprint_mm": tuple(
             (tris_xy.reshape(-1, 2).max(axis=0) - tris_xy.reshape(-1, 2).min(axis=0)).round(1)
         ),
@@ -76,7 +86,7 @@ def main():
     args = ap.parse_args()
 
     files = (
-        sorted(p for p in args.path.iterdir() if p.suffix.lower() in {".stl", ".obj"})
+        sorted(p for p in args.path.rglob("*") if p.suffix.lower() in {".stl", ".obj"})
         if args.path.is_dir()
         else [args.path]
     )
@@ -85,6 +95,13 @@ def main():
     args.out.mkdir(exist_ok=True)
 
     for f in files:
+        # Flatten the relative path into the PNG name so same-named files in
+        # different subfolders don't collide.
+        stem = (
+            "_".join(f.relative_to(args.path).with_suffix("").parts)
+            if args.path.is_dir()
+            else f.stem
+        )
         t0 = time.perf_counter()
         mesh = trimesh.load_mesh(f, process=False)
         if isinstance(mesh, trimesh.Scene):
@@ -94,10 +111,12 @@ def main():
         mask, _origin, s = extract_footprint(mesh, args.res, args.spacing)
         t_conv = benchmark_convolution(mask, args.res)
 
-        png = args.out / f"{f.stem}_{args.res}mm.png"
+        png = args.out / f"{stem}_{args.res}mm.png"
         cv2.imwrite(str(png), mask * 255)
 
         print(f"\n{f.name}")
+        if s["dropped_nonfinite"]:
+            print(f"  WARNING: dropped {s['dropped_nonfinite']:,} non-finite triangles")
         print(
             f"  triangles={s['triangles']:,}  z_height={s['z_height_mm']:.1f}mm  "
             f"footprint={s['footprint_mm'][0]}x{s['footprint_mm'][1]}mm"

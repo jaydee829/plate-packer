@@ -14,6 +14,12 @@ This file tracks project bugs, their root causes, solutions, and prevention stra
 
 <!-- Add new entries below in reverse-chronological order (newest first). -->
 
+### 2026-08-01 - NaN vertices in real pre-supported STLs crash extraction
+- **Issue**: `ValueError: negative dimensions are not allowed` sizing the mask canvas for a real Archvillain STL (Decataur Pose 1 body).
+- **Root Cause**: 192 of 1.27M triangles (0.015%) had all-NaN vertices; NaN propagated through bounds → canvas size cast to a garbage negative int. `mesh.bounds` was poisoned the same way.
+- **Solution**: Filter non-finite triangles before computing bounds/z-height in `extract_footprint`; report a dropped-triangle count in stats and a WARNING in output.
+- **Prevention**: `test_nonfinite_triangles_are_dropped` (NaN + inf cases). Assume every field of a Kickstarter mesh can be garbage — validate at load, never trust `mesh.bounds` on unprocessed meshes.
+
 ### 2026-08-01 - fillPoly multi-polygon call cancels overlapping triangles
 - **Issue**: Footprint mask of a simple box had 37% coverage instead of ~100%; overlapping projected triangles produced holes.
 - **Root Cause**: `cv2.fillPoly(mask, list_of_polys, 1)` applies the even-odd fill rule across the whole batch — overlapping polygons XOR out instead of unioning.
