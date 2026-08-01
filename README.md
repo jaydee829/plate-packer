@@ -21,8 +21,8 @@ uv run pytest        # run tests
 uv run ruff check .  # lint
 uv run ruff format . # format
 
-# prototype: extract footprint masks from a folder of supported STLs
-uv run python scripts/extract_footprint.py example_stls --res 0.1 --spacing 0.5
+# generate footprint cache docs (shared with stl_curator)
+uv run plate-packer footprints example_stls --footprints-dir footprints
 ```
 
 Project knowledge (ADRs, bug log, key facts) lives in [docs/project_notes/](docs/project_notes/).

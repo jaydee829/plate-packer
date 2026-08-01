@@ -12,6 +12,12 @@ This file tracks work history and ticket references.
 
 ## Log
 
+### 2026-08-01 - FOOTPRINT-IO: Content-addressed cache + CLI (PR #1)
+- **Status**: Completed (PR open, CI green)
+- **Description**: Implemented ADR-009 via subagent-driven development: package extraction (undilated), footprint_io contract docs (schema v1, 0.05mm/px, atomic writes), dilate-on-load, `plate-packer footprints` CLI. 53 tests.
+- **URL**: https://github.com/jaydee829/plate-packer/pull/1
+- **Notes**: Two instructive bugs caught by review/CI: cached-array aliasing on the no-op path, and typer's single-command collapse (see bugs.md). Export-milestone TODO recorded in key_facts.md (prepare_mask origin offset).
+
 ### 2026-08-01 - PACKER: Greedy packing engine (v1 core)
 - **Status**: Completed
 - **Description**: TDD-built src/plate_packer/packer.py — FFT legality map, bottom-left heuristic (pluggable), lossless right-angle + conservative arbitrary-angle mask rotation, largest-first greedy with spillover, pre-pack validation. Repo flipped to src/ package layout (hatchling).

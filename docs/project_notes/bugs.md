@@ -14,6 +14,12 @@ This file tracks project bugs, their root causes, solutions, and prevention stra
 
 <!-- Add new entries below in reverse-chronological order (newest first). -->
 
+### 2026-08-01 - Typer single-command app made tests pass locally, fail on CI
+- **Issue**: All 5 CLI tests exited 2 (usage error) on CI while passing locally; e2e had "verified" the CLI.
+- **Root Cause**: `typer.Typer()` with exactly one registered command collapses it into the root command, so the token `footprints` was parsed as the first `paths` argument. Locally it passed by accident: the gitignored `./footprints/` output dir existed in cwd, satisfying `exists=True`.
+- **Solution**: Added a no-op `@app.callback()` to preserve subcommand structure, plus a regression test that chdirs to a clean tmp cwd (commit 8f378e9).
+- **Prevention**: Tests that touch CLI parsing must run from a cwd without repo artifacts (monkeypatch.chdir(tmp_path)). Distrust green tests whose inputs coincide with gitignored local state — CI's clean checkout is the arbiter.
+
 ### 2026-08-01 - NaN vertices in real pre-supported STLs crash extraction
 - **Issue**: `ValueError: negative dimensions are not allowed` sizing the mask canvas for a real Archvillain STL (Decataur Pose 1 body).
 - **Root Cause**: 192 of 1.27M triangles (0.015%) had all-NaN vertices; NaN propagated through bounds → canvas size cast to a garbage negative int. `mesh.bounds` was poisoned the same way.

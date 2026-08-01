@@ -1,10 +1,10 @@
-"""Prototype: extract 2D footprint masks from supported STL/OBJ files.
+"""Dev utility for eyeballing footprint masks and timing.
 
-Projects every triangle of the mesh straight down onto XY and rasterizes the
-union into a binary mask (the "vertical shadow"), then dilates by the minimum
-spacing margin. Saves a PNG per input for eyeballing and prints timing data,
-including an fftconvolve benchmark against a full-plate mask, to answer the
-seed doc's open questions 1-2 (resolution vs. cost, fillPoly robustness).
+Extracts 2D footprint masks from STL/OBJ files by projecting all triangles
+onto XY and rasterizing the union into a binary mask. Saves PNG outputs
+for visual inspection and prints timing data (load, raster, fftconvolve).
+Extraction logic lives in plate_packer.footprint; cache generation is via
+`plate-packer footprints`.
 
 Usage:
     python scripts/extract_footprint.py example_stls [--res 0.1] [--spacing 0.5]
@@ -21,51 +21,18 @@ import numpy as np
 import trimesh
 from scipy.signal import fftconvolve
 
+from plate_packer.footprint import extract_footprint as _extract
+from plate_packer.loading import dilate
+
 PLATE_MM = (200.0, 130.0)  # benchmark plate size (typical mid-size MSLA)
 
 
-def extract_footprint(mesh: trimesh.Trimesh, res_mm: float, spacing_mm: float):
-    """Return (mask, origin_mm, stats). Mask is uint8 {0,1}, row 0 = min Y."""
-    t0 = time.perf_counter()
-    tris = mesh.triangles  # (n, 3, 3) mm
-    # Real-world pre-supported STLs can contain NaN vertices (seen in the wild
-    # at ~0.015% of triangles); they poison the bounds and canvas size.
-    finite = np.isfinite(tris).all(axis=(1, 2))
-    n_bad = int((~finite).sum())
-    if n_bad:
-        tris = tris[finite]
-    if len(tris) == 0:
-        raise ValueError("mesh has no finite triangles")
-    tris_xy = tris[:, :, :2]
-    # Pad the canvas by the dilation radius so the spacing margin isn't
-    # clipped at the borders; origin shifts accordingly.
-    r = max(1, round(spacing_mm / res_mm)) if spacing_mm > 0 else 0
-    origin = tris_xy.reshape(-1, 2).min(axis=0) - r * res_mm
-    size_px = np.ceil((tris_xy.reshape(-1, 2).max(axis=0) - origin) / res_mm).astype(int) + 1 + r
-
-    mask = np.zeros((size_px[1], size_px[0]), dtype=np.uint8)
-    tris_px = np.round((tris_xy - origin) / res_mm).astype(np.int32)
-    # One fillPoly call per triangle: a single multi-polygon call uses the
-    # even-odd rule, so overlapping triangles cancel instead of unioning.
-    for tri in tris_px:
-        cv2.fillConvexPoly(mask, tri, 1)
-    t_raster = time.perf_counter() - t0
-
-    if r > 0:
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
-        mask = cv2.dilate(mask, kernel)
-
-    stats = {
-        "triangles": len(mesh.triangles),
-        "dropped_nonfinite": n_bad,
-        "z_height_mm": float(tris[:, :, 2].max() - tris[:, :, 2].min()),
-        "footprint_mm": tuple(
-            (tris_xy.reshape(-1, 2).max(axis=0) - tris_xy.reshape(-1, 2).min(axis=0)).round(1)
-        ),
-        "mask_px": mask.shape,
-        "coverage": float(mask.mean()),
-        "raster_s": t_raster,
-    }
+def extract_footprint(mesh, res_mm, spacing_mm):
+    mask, origin, stats = _extract(mesh, res_mm)
+    if spacing_mm > 0:
+        r = max(1, round(spacing_mm / res_mm))
+        mask = dilate(mask, r)
+        origin = origin - r * res_mm
     return mask, origin, stats
 
 

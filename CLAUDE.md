@@ -13,9 +13,18 @@ Institutional knowledge lives in `docs/project_notes/` (protocols shared with ot
 
 Keep entries concise, dated, bullet-listed.
 
+## Pre-Merge Checklist (required)
+
+When work is complete and you are about to ask the user whether to merge, update BOTH memory systems FIRST, in the same turn as the merge prompt — the user merges and then compacts the session before starting a new task, so anything not written down is lost:
+
+1. **Project memory** (`docs/project_notes/`): work-log entry in `issues.md`; any instructive bugs to `bugs.md`; new/changed decisions to `decisions.md`; new constants, contracts, or TODOs to `key_facts.md`. Commit these to the branch being merged.
+2. **Claude's persistent memory** (the per-project memory directory + `MEMORY.md` index): anything cross-session that doesn't belong in the repo — user preferences and feedback, workflow lessons, cross-project context (e.g. stl_curator coordination state).
+
+Only then present the merge options.
+
 ## Project Status
 
-Pre-code. The full design lives in `PLATEPACKER_SEED.md` — read it before implementing anything. `example_stls/` holds real supported-STL test files (may be empty until the user adds them). No build tooling, package config, or tests exist yet; when scaffolding, use Python 3.11+, `pytest`, and the stack below.
+Working package (`src/plate_packer/`, uv-managed, hatchling src layout) with pytest suite and GitHub Actions CI. Implemented: footprint extraction (`footprint.py`), greedy packer (`packer.py`), content-addressed footprint cache per the stl_curator contract (`footprint_io.py`, ADR-009), dilate-on-load (`loading.py`), and the `plate-packer footprints` CLI (`cli.py`). Next up: export (transforms + merged STL per plate — see the Coordinate Landmine) and the merged-shadow self-check. The original design doc is `PLATEPACKER_SEED.md`; `example_stls/` is a junction to real supported STLs (gitignored — copyrighted).
 
 ## What This Is
 
@@ -42,7 +51,7 @@ validate pieces → extract footprints (dilated by min-spacing margin)
 
 Key structural rules baked into the design:
 
-- **Margin dilation happens once at footprint extraction**, so the packer itself is margin-unaware.
+- **Margin dilation happens at load time, not extraction** (ADR-009 superseded the seed doc here): cached footprints are undilated/intrinsic at canonical 0.05 mm/px; `loading.prepare_mask` applies spacing + working resolution. The packer itself stays margin-unaware.
 - **Validation runs before packing**: pieces taller than build volume or too big for an empty plate at any rotation are hard per-piece errors, never mysterious spillover.
 - **Plate masks pre-encode unusable regions** (dead margins, chamfered corners), so every zero pixel is a printable placement.
 - **Placement heuristic is pluggable** (start with bottom-left).
