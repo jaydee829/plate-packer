@@ -3,6 +3,7 @@ name = "plate-packer"
 version = "0.1.0"
 description = "Packs pre-supported resin (MSLA) models onto build plates using true irregular footprints with free rotation, minimizing plate count"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "trimesh>=4.5",
