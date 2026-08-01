@@ -166,8 +166,9 @@ def verify_plate(
 - Assertion: **actual shadow ⊆ predicted occupancy** (subset, not equality — occupancy
   legitimately contains spacing margins). When `spacing_mm == 0`, the predicted mask is
   dilated by 1 px first as rounding tolerance.
-- Occupancy is reconstructed from placements + rotated masks (deterministic re-placement,
-  same `|=` loop as `pack`) — `pack()`'s API stays unchanged.
+- The `occupancy` argument is reconstructed by the caller (the CLI) from placements +
+  rotated masks (deterministic re-placement, same `|=` loop as `pack`) — `pack()`'s API
+  stays unchanged.
 
 CLI behavior: verify every plate after writing (default on; `--no-verify` skips).
 Failure: report plate filename + violating pixel count, keep all output files on disk,
