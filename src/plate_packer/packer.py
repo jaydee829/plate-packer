@@ -88,6 +88,20 @@ def legal_placement_map(plate: np.ndarray, piece: np.ndarray) -> np.ndarray:
     return overlap < _OVERLAP_THRESHOLD
 
 
+def _crop_to_content_bbox(binary: np.ndarray) -> tuple[np.ndarray, int, int]:
+    """Crop a binary mask to its content bounding box.
+
+    Returns (cropped, r0, c0) where r0, c0 are the offsets of the crop.
+    """
+    rows, cols = binary.any(axis=1), binary.any(axis=0)
+    r0, c0 = int(np.argmax(rows)), int(np.argmax(cols))
+    cropped = binary[
+        r0 : len(rows) - np.argmax(rows[::-1]),
+        c0 : len(cols) - np.argmax(cols[::-1]),
+    ]
+    return cropped, r0, c0
+
+
 def rotate_mask(mask: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndarray]:
     """Rotate a binary mask about its center, expanding the canvas and cropping
     to the content bbox. Returns (rotated, affine): affine is the 2x3 map from
@@ -103,17 +117,7 @@ def rotate_mask(mask: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndar
         # Exact and lossless at right angles; warpAffine clips edge pixels.
         rotated = np.ascontiguousarray(np.rot90(mask, k))
         # Crop to content bbox even for right angles to ensure tight output
-        binary = rotated.astype(np.uint8)
-        rows, cols = binary.any(axis=1), binary.any(axis=0)
-        if rows.any() and cols.any():
-            r0, c0 = int(np.argmax(rows)), int(np.argmax(cols))
-            cropped = binary[
-                r0 : len(rows) - np.argmax(rows[::-1]),
-                c0 : len(cols) - np.argmax(cols[::-1]),
-            ]
-        else:
-            r0, c0 = 0, 0
-            cropped = binary
+        cropped, r0, c0 = _crop_to_content_bbox(rotated)
         # Compute affine for this right angle with crop adjustment
         affines_base = {
             0: np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
@@ -136,12 +140,7 @@ def rotate_mask(mask: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndar
     # space in the collision map.
     rotated = cv2.warpAffine(mask.astype(np.float32), m, (new_w, new_h), flags=cv2.INTER_LINEAR)
     binary = (rotated > 0).astype(np.uint8)
-    rows, cols = binary.any(axis=1), binary.any(axis=0)
-    r0, c0 = int(np.argmax(rows)), int(np.argmax(cols))
-    cropped = binary[
-        r0 : len(rows) - np.argmax(rows[::-1]),
-        c0 : len(cols) - np.argmax(cols[::-1]),
-    ]
+    cropped, r0, c0 = _crop_to_content_bbox(binary)
     m[0, 2] -= c0
     m[1, 2] -= r0
     return cropped, m
