@@ -23,6 +23,11 @@ This file tracks important project configuration, constants, and environment det
 - **Later / Optional**: `cupy` (GPU convolution), `typer` or `argparse` (CLI)
 - **Testing**: `pytest`. Priority targets: rasterization correctness on known shapes, pixel↔mm↔pixel round-trip, spillover behavior, merged-shadow end-to-end self-check.
 
+## stl_curator Interface (normative — ADR-009)
+- **Contract location**: `C:\dev\stl_curator\docs\superpowers\specs\2026-08-01-stl-curator-m1-design.md` §4. Changes require updating both projects and that section.
+- **Footprint docs**: `footprints/<first-2-hex>/<sha256-hex>.json`, shared `footprints_dir` config. One STL → one doc → many footprints (z-slices). We own/version the JSON internals; curator only records existence.
+- **Docs hold intrinsic data only** (undilated masks, canonical res); spacing/res applied at packer load time.
+
 ## Domain Constants & Conventions
 - **Raster resolution**: ~0.05–0.1 mm/px, config knob; tune empirically (0.1 mm/px on a ~200×130 mm plate → ~2000×1300 masks).
 - **Rotation steps**: ~36–72, config knob.

@@ -156,6 +156,26 @@ This file documents key architectural decisions, their context, and trade-offs.
 - Pros: simple, obviously correct code while the pipeline is built around it.
 - Trade-offs: extraction of a 20-piece job spends ~40s serial today.
 
+### ADR-009: Adopt stl_curator footprint contract; footprint docs store intrinsic data only (2026-08-01)
+
+**Context:**
+- stl_curator's M1 design (its docs/superpowers/specs/2026-08-01-stl-curator-m1-design.md §4) defines the normative interface: footprints are content-addressed by STL SHA-256 at `footprints/<first-2-hex>/<hash>.json` under a shared `footprints_dir`; one STL → one JSON doc → many footprints (z-slices); plate_packer owns and versions the JSON internals; curator treats it as opaque.
+- Content-addressing by hash alone means the document can only contain data *intrinsic to the STL*. Our current extraction bakes in the min-spacing dilation — but spacing (and target resolution) are packer/printer config, not properties of the file. Baked-in dilation would silently serve wrong margins when config changes.
+
+**Decision:**
+- Accept the contract as written; no changes requested to stl_curator.
+- Footprint documents store only intrinsic data: UNDILATED shadow mask(s) at a recorded canonical resolution, origin, z-height, band edges (v2), triangle count, dropped-nonfinite count, schema version. Masks embedded as base64 PNG (binary masks compress ~100x).
+- Spacing dilation and any resolution downsampling move from extraction time to packer load time (one cv2.dilate per piece — measured trivial). The packer core stays margin-unaware; the loading layer applies config.
+- Supersedes the "dilate once at extraction" clause of the pipeline design (seed doc §1); everything else stands.
+
+**Alternatives Considered:**
+- Key cache by hash+params -> violates the contract (curator derives location from hash alone) and explodes cache variants.
+- Ask curator to add params to the path -> unnecessary; the fix is cleanly on our side and the contract explicitly gives us schema ownership.
+
+**Consequences:**
+- Pros: one cached footprint serves any spacing/resolution config; contract untouched; cache is pure function of file content.
+- Trade-offs: extraction output is no longer directly packable — a thin load step (dilate + optional downsample) sits between cache and packer.
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal
