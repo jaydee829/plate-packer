@@ -72,7 +72,7 @@ def footprints(
             if isinstance(mesh, trimesh.Scene):
                 mesh = trimesh.util.concatenate(list(mesh.geometry.values()))
             mask, origin, stats = extract_footprint(mesh, CANONICAL_RES_MM)
-            save_doc(out_dir, sha, mask, origin, stats)
+            save_doc(out_dir, sha, mask, origin, stats, res_mm_per_px=CANONICAL_RES_MM)
             written += 1
             typer.echo(f"  {f.name}: ok ({stats['mask_px'][1]}x{stats['mask_px'][0]}px)")
         except Exception as e:  # per-file failures never halt the batch

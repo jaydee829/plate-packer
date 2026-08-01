@@ -44,7 +44,7 @@ def doc_path(footprints_dir: Path, sha: str) -> Path:
     return Path(footprints_dir) / sha[:2] / f"{sha}.json"
 
 
-def save_doc(footprints_dir, sha, mask, origin_mm, stats) -> Path:
+def save_doc(footprints_dir, sha, mask, origin_mm, stats, res_mm_per_px=CANONICAL_RES_MM) -> Path:
     ok, png = cv2.imencode(".png", mask.astype(np.uint8) * 255)
     if not ok:
         raise RuntimeError("PNG encoding failed")
@@ -52,7 +52,7 @@ def save_doc(footprints_dir, sha, mask, origin_mm, stats) -> Path:
         "schema_version": SCHEMA_VERSION,
         "generator": _GENERATOR,
         "stl_sha256": sha,
-        "res_mm_per_px": CANONICAL_RES_MM,
+        "res_mm_per_px": res_mm_per_px,
         "origin_mm": [float(origin_mm[0]), float(origin_mm[1])],
         "z_height_mm": stats["z_height_mm"],
         "triangles": stats["triangles"],

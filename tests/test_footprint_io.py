@@ -132,3 +132,10 @@ def test_load_doc_corrupt_png_raises(tmp_path):
     p.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="corrupt mask PNG"):
         load_doc(tmp_path, SHA_A)
+
+
+def test_save_doc_records_the_resolution_it_was_given(tmp_path):
+    """save_doc must record the caller's actual extraction resolution."""
+    save_doc(tmp_path, SHA_A, checker_mask(), (0.0, 0.0), STATS, res_mm_per_px=0.2)
+    doc = load_doc(tmp_path, SHA_A)
+    assert doc.res_mm_per_px == 0.2
