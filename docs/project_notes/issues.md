@@ -12,6 +12,12 @@ This file tracks work history and ticket references.
 
 ## Log
 
+### 2026-08-01 - PACKER: Greedy packing engine (v1 core)
+- **Status**: Completed
+- **Description**: TDD-built src/plate_packer/packer.py — FFT legality map, bottom-left heuristic (pluggable), lossless right-angle + conservative arbitrary-angle mask rotation, largest-first greedy with spillover, pre-pack validation. Repo flipped to src/ package layout (hatchling).
+- **URL**: https://github.com/jaydee829/plate-packer
+- **Notes**: End-to-end on real Archvillain footprints: 8 pieces -> 1 plate (200x130mm), 56% occupied, pack=14s at 8 rotations. Rotation must never LOSE pixels (false free space) — right angles use np.rot90, arbitrary angles use linear-interp + any-touched threshold. Next: export (transform + merged STL) and the merged-shadow self-check.
+
 ### 2026-08-01 - SETUP: Tooling, prototype, and GitHub publish
 - **Status**: Completed
 - **Description**: uv-managed pyproject + ruff + pytest; footprint-extraction prototype with tests (2 rasterization bugs found/fixed, see bugs.md); published public repo with MIT license and GitHub Actions CI.

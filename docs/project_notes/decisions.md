@@ -121,6 +121,41 @@ This file documents key architectural decisions, their context, and trade-offs.
 - Pros: Fast installs and reproducible envs via uv lock; single-tool lint/format; CI mirrors local commands.
 - Trade-offs: Existing pip `.venv` must be migrated to uv when the package is formalized.
 
+### ADR-007: v1 interfaces must not block v2 Z-banding (2026-08-01)
+
+**Context:**
+- v2 replaces one shadow mask per piece with K per-band masks to allow tall-over-short overhang interleaving. Designed now so v1 code doesn't paint us into a corner.
+
+**Decision:**
+- Extraction returns an opaque per-piece footprint object the packer doesn't introspect; v2 swaps "one mask" for "K masks + band edges" touching only extraction and the legality check.
+- Legality stays "zeros in a non-negative correlation map": band maps are summed (in frequency domain — one inverse FFT per rotation), so zero-sum = legal in every band. Greedy loop, spillover proof, and export are untouched.
+- Banding gives overhang interleaving only — pieces always sit at Z=0; no stacking.
+- Physical clearance handled at extraction as dilation knobs: per-band XY margin (removal/drainage under canopies) and Z-margin at band edges.
+- Rasterization invariant: raster resolution <= min_spacing/4, so dilation swamps sub-pixel aliasing on thin support slivers; draw triangle edges (polylines) in addition to fills as dropout insurance.
+
+**Alternatives Considered:**
+- Full 3D voxel collision -> massive cost; banding captures the mini-shaped win (wide base/thin stem/wide canopy) with 4-8 bands.
+- Sparse point-set collision for near-empty upper bands -> optimization only if K-band FFT ever measures as bottleneck.
+
+**Consequences:**
+- Pros: v2 is an extraction+legality change, not a rewrite; correctness argument (conservative per-band shadows) carries over.
+- Trade-offs: conservative within each band; per-triangle band assignment duplicates boundary-spanning triangles.
+
+### ADR-008: Rasterization loop stays serial until measured; escalation is render, not threads (2026-08-01)
+
+**Context:**
+- Per-triangle fillConvexPoly measured 2-3.5s on 1.7M-triangle real meshes, once per piece (rotation sweep rotates the mask, not the mesh).
+
+**Decision:**
+- Keep the serial loop. If extraction measures as the bottleneck: (1) piece-level multiprocessing pool, (2) orthographic top-down depth render (trimesh/pyrender) which also yields Z-band masks cheaply.
+
+**Alternatives Considered:**
+- Thread-parallelizing the inner loop -> concurrent OpenCV writes to one buffer are unsafe; per-thread masks + OR is a worse version of the process pool.
+
+**Consequences:**
+- Pros: simple, obviously correct code while the pipeline is built around it.
+- Trade-offs: extraction of a 20-piece job spends ~40s serial today.
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal
