@@ -15,7 +15,7 @@ _RATIO_TOL = 1e-6
 def conservative_downsample(mask: np.ndarray, factor: int) -> np.ndarray:
     """Block max: any occupied source pixel marks the coarse cell."""
     if factor == 1:
-        return mask
+        return mask.copy()
     h, w = mask.shape
     ph, pw = -h % factor, -w % factor
     padded = np.pad(mask, ((0, ph), (0, pw)))

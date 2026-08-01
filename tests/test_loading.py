@@ -78,3 +78,12 @@ def test_prepare_mask_non_integer_ratio_raises():
     doc = make_doc(np.ones((4, 4), np.uint8))
     with pytest.raises(ValueError, match="integer multiple"):
         prepare_mask(doc, spacing_mm=0.5, working_res_mm=0.075)
+
+
+def test_prepare_mask_never_aliases_the_cached_doc():
+    """Mutating the returned mask must not corrupt the cached doc (no-op path)."""
+    mask = np.ones((4, 4), np.uint8)
+    doc = make_doc(mask)
+    out = prepare_mask(doc, spacing_mm=0.0, working_res_mm=CANONICAL_RES_MM)
+    out[0, 0] = 0
+    assert doc.masks[0][0, 0] == 1
