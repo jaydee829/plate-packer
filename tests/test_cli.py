@@ -52,3 +52,29 @@ def test_footprints_reports_failures_and_continues(stl_tree, tmp_path):
     assert "2 written" in result.output
     assert "1 failed" in result.output
     assert "corrupt.stl" in result.output
+
+
+def test_footprints_dedupes_overlapping_inputs(stl_tree, tmp_path):
+    """When both a directory and a file inside it are passed, dedupe while preserving order."""
+    out = tmp_path / "fp"
+    # Pass both the directory and one specific file inside it
+    cube_file = stl_tree / "cube.stl"
+    # Use --force to prevent caching from masking the duplicate
+    result = runner.invoke(
+        app, ["footprints", str(stl_tree), str(cube_file), "--footprints-dir", str(out), "--force"]
+    )
+    assert result.exit_code == 0
+    # Should only write 2 files (cube and brick), not 3 (cube processed twice + brick)
+    assert "2 written" in result.output
+    # Verify the exact count to ensure no double-processing
+    assert "3 written" not in result.output
+
+
+def test_footprints_no_files_found_message(tmp_path):
+    """When no STL/OBJ files are found, output should say so."""
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    out = tmp_path / "fp"
+    result = runner.invoke(app, ["footprints", str(empty_dir), "--footprints-dir", str(out)])
+    assert result.exit_code == 0
+    assert "no STL/OBJ files found" in result.output

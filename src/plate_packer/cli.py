@@ -36,7 +36,8 @@ def _discover(paths: list[Path]) -> list[Path]:
             files.extend(q for q in sorted(p.rglob("*")) if q.suffix.lower() in _EXTENSIONS)
         elif p.suffix.lower() in _EXTENSIONS:
             files.append(p)
-    return files
+    # Dedupe while preserving order, using resolved paths
+    return list(dict.fromkeys(f.resolve() for f in files))
 
 
 @app.command()
@@ -49,9 +50,13 @@ def footprints(
 ):
     """Generate footprint cache documents for STL/OBJ files."""
     out_dir = footprints_dir or _default_footprints_dir()
+    files = _discover(paths)
+    if not files:
+        typer.echo("no STL/OBJ files found")
+        return
     written = skipped = 0
     failures: list[tuple[Path, str]] = []
-    for f in _discover(paths):
+    for f in files:
         try:
             sha = file_sha256(f)
             if not force and has_current_doc(out_dir, sha):

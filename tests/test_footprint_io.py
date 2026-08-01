@@ -92,11 +92,18 @@ def test_no_tmp_file_left_behind(tmp_path):
         pytest.param("none", False, id="absent"),
         pytest.param("current", True, id="current-version"),
         pytest.param("stale", False, id="stale-version-treated-as-absent"),
+        pytest.param("garbage-bytes", False, id="garbage-bytes-treated-as-absent"),
     ],
 )
 def test_has_current_doc(tmp_path, setup, expected):
-    if setup in ("current", "stale"):
-        save_doc(tmp_path, SHA_A, checker_mask(), (0.0, 0.0), STATS)
+    if setup in ("current", "stale", "garbage-bytes"):
+        if setup != "garbage-bytes":
+            save_doc(tmp_path, SHA_A, checker_mask(), (0.0, 0.0), STATS)
+        else:
+            # Write raw invalid UTF-8 bytes to simulate corrupt doc
+            p = doc_path(tmp_path, SHA_A)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"\xff\xfe garbage \xff")
     if setup == "stale":
         p = doc_path(tmp_path, SHA_A)
         raw = json.loads(p.read_text(encoding="utf-8"))
@@ -112,4 +119,16 @@ def test_load_doc_stale_version_raises(tmp_path):
     raw["schema_version"] = 99
     p.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="schema_version"):
+        load_doc(tmp_path, SHA_A)
+
+
+def test_load_doc_corrupt_png_raises(tmp_path):
+    """load_doc should raise ValueError on undecodable PNG data."""
+    save_doc(tmp_path, SHA_A, checker_mask(), (0.0, 0.0), STATS)
+    p = doc_path(tmp_path, SHA_A)
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    # Corrupt the mask_png_b64 by setting it to valid base64 of garbage bytes
+    raw["footprints"][0]["mask_png_b64"] = base64.b64encode(b"not a png").decode()
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupt mask PNG"):
         load_doc(tmp_path, SHA_A)

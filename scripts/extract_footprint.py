@@ -1,10 +1,10 @@
-"""Prototype: extract 2D footprint masks from supported STL/OBJ files.
+"""Dev utility for eyeballing footprint masks and timing.
 
-Projects every triangle of the mesh straight down onto XY and rasterizes the
-union into a binary mask (the "vertical shadow"), then dilates by the minimum
-spacing margin. Saves a PNG per input for eyeballing and prints timing data,
-including an fftconvolve benchmark against a full-plate mask, to answer the
-seed doc's open questions 1-2 (resolution vs. cost, fillPoly robustness).
+Extracts 2D footprint masks from STL/OBJ files by projecting all triangles
+onto XY and rasterizing the union into a binary mask. Saves PNG outputs
+for visual inspection and prints timing data (load, raster, fftconvolve).
+Extraction logic lives in plate_packer.footprint; cache generation is via
+`plate-packer footprints`.
 
 Usage:
     python scripts/extract_footprint.py example_stls [--res 0.1] [--spacing 0.5]

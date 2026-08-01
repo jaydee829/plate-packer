@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 
 import cv2
@@ -17,7 +18,7 @@ import numpy as np
 
 CANONICAL_RES_MM = 0.05
 SCHEMA_VERSION = 1
-_GENERATOR = "plate-packer 0.1.0"
+_GENERATOR = f"plate-packer {version('plate-packer')}"
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,8 @@ def load_doc(footprints_dir, sha) -> FootprintDoc:
     for fp in raw["footprints"]:
         buf = np.frombuffer(base64.b64decode(fp["mask_png_b64"]), np.uint8)
         img = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            raise ValueError(f"corrupt mask PNG in doc {raw['stl_sha256']}")
         masks.append((img > 0).astype(np.uint8))
     return FootprintDoc(
         sha=raw["stl_sha256"],
@@ -98,6 +101,7 @@ def has_current_doc(footprints_dir, sha) -> bool:
         return False
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
+        # ValueError covers both json.JSONDecodeError and UnicodeDecodeError
         return False
     return raw.get("schema_version") == SCHEMA_VERSION
