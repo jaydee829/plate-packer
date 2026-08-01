@@ -122,3 +122,49 @@ def test_verify_plate_catches_out_of_bounds():
     # box sits at x [-40,-30]; +85mm puts it at [45,55], past the +50 plate edge
     mesh, occ = _shadow_setup(shift_mm=(85.0, 0.0))
     assert verify_plate(mesh, occ, RES, PLATE, 0.0) > 0
+
+
+def _lshape_mesh():
+    """Asymmetric L-shaped extrusion (no rotational symmetry) -- regression
+    fixture for the rotated-placement e2e self-check (final review finding:
+    verify_plate was never exercised at angle != 0 with a real mesh)."""
+    a = trimesh.creation.box(extents=(12.0, 4.0, 5.0))
+    a.apply_translation((6.0, 2.0, 2.5))
+    b = trimesh.creation.box(extents=(4.0, 10.0, 5.0))
+    b.apply_translation((2.0, 5.0, 2.5))
+    m = trimesh.util.concatenate([a, b])
+    m.apply_translation((3.3, -7.1, 1.0))  # arbitrary offset incl. Z
+    return m
+
+
+@pytest.mark.parametrize("angle", [90.0, 45.0])
+def test_verify_plate_passes_for_rotated_placement(angle):
+    """Merged-shadow property at angle != 0: shadow of a correctly-placed,
+    non-rotationally-symmetric mesh is a subset of the predicted occupancy."""
+    mesh = _lshape_mesh()
+    mask, origin, _ = extract_footprint(mesh, RES)
+    rmask, aff = rotate_mask(mask, angle)
+    row, col = 50, 80
+    t4 = placement_transform((float(origin[0]), float(origin[1])), aff, row, col, RES, PLATE)
+    moved = mesh.copy()
+    moved.apply_transform(t4)
+    occ = np.zeros(PLATE_SHAPE, np.uint8)
+    occ[row : row + rmask.shape[0], col : col + rmask.shape[1]] |= rmask
+    assert verify_plate(moved, occ, RES, PLATE, 2.0) == 0
+
+
+@pytest.mark.parametrize("angle", [90.0, 45.0])
+def test_verify_plate_catches_shifted_rotated_placement(angle):
+    """Companion failing case: shifting the rotated mesh beyond the spacing
+    margin must be caught by the self-check."""
+    mesh = _lshape_mesh()
+    mask, origin, _ = extract_footprint(mesh, RES)
+    rmask, aff = rotate_mask(mask, angle)
+    row, col = 50, 80
+    t4 = placement_transform((float(origin[0]), float(origin[1])), aff, row, col, RES, PLATE)
+    moved = mesh.copy()
+    moved.apply_transform(t4)
+    moved.apply_translation((3.0, 0.0, 0.0))  # > 2.0mm spacing margin
+    occ = np.zeros(PLATE_SHAPE, np.uint8)
+    occ[row : row + rmask.shape[0], col : col + rmask.shape[1]] |= rmask
+    assert verify_plate(moved, occ, RES, PLATE, 2.0) > 0
