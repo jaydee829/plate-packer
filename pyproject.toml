@@ -10,7 +10,11 @@ dependencies = [
     "numpy>=2.0",
     "scipy>=1.14",
     "opencv-python-headless>=4.10",
+    "typer>=0.27.0",
 ]
+
+[project.scripts]
+plate-packer = "plate_packer.cli:app"
 
 [dependency-groups]
 dev = [

@@ -1,0 +1,4 @@
+# Copy to config.toml and adjust. All keys optional.
+[paths]
+# Shared with stl_curator (interface contract §4.2).
+footprints_dir = "footprints"
