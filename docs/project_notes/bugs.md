@@ -14,7 +14,11 @@ This file tracks project bugs, their root causes, solutions, and prevention stra
 
 <!-- Add new entries below in reverse-chronological order (newest first). -->
 
-### 2026-08-01 - ruff format checks python code blocks inside markdown docs
+### 2026-08-01 - MemoryError in verify stage on first real-world pack
+- **Issue**: `pack` of 30 Tome of Demons pieces crashed with `MemoryError: Unable to allocate 382 MiB` while verifying plate_01.stl (16.7M vertices, 266MB file); plates were written but report/verify never ran.
+- **Root Cause**: verify reloaded merged plates via `trimesh.load_mesh`, which builds a Scene then deep-copies the mesh in `to_mesh()` (~3-4x the mesh in RAM), on top of all pack-stage arrays still alive in the process.
+- **Solution**: `export.read_stl_triangles` reads binary STL triangle records directly with numpy (no mesh object, no copy, float32); CLI builds/writes the report before verification and frees mask arrays first (commit bd56cef).
+- **Prevention**: never round-trip our own exported plates through a full mesh loader when only the triangle soup is needed; test with production-scale inputs early — the unit-test boxes could never surface allocation-order issues.
 - **Issue**: `ruff format --check .` (the CI gate) failed on `docs/superpowers/plans/2026-08-01-export.md` — a docs-only file.
 - **Root Cause**: ruff formats fenced python code blocks in .md files; the plan's hand-written snippets weren't format-clean.
 - **Solution**: `uv run ruff format <file>` on the plan doc (commit 68b6cc7).

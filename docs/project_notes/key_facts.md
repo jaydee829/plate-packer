@@ -37,6 +37,9 @@ This file tracks important project configuration, constants, and environment det
 - **`--copies` landmine (future)**: cli/export index `transforms[placement.piece]`, valid only while pack() emits exactly one placement per piece. Copies require per-placement transforms.
 - **Report rotation values** are true world rotation from the composed transform; nominal `Placement.angle` 90° prints as 270° (rot90/warpAffine rotate clockwise in the row-0=min-Y frame). Intentional — do not "fix".
 
+## Real-World Benchmarks (2026-08-01, user's machine, defaults: 0.1mm/px, 8 rotations)
+- 30 Tome of Demons pieces (0.2M–1.7M tris each): extraction/caching 204s total; pack+export+verify+report 477s; → 4 plates at 54–62% occupancy, ~200–270MB merged STL per plate. Reference point for ADR-008 escalation decisions.
+
 ## Domain Constants & Conventions
 - **Raster resolution**: ~0.05–0.1 mm/px, config knob; tune empirically (0.1 mm/px on a ~200×130 mm plate → ~2000×1300 masks).
 - **Rotation steps**: ~36–72, config knob.
