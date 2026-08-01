@@ -16,7 +16,7 @@ def occupancy_from(placements, pieces, plate_shape):
     n_plates = max(p.plate for p in placements) + 1
     plates = np.zeros((n_plates, *plate_shape), np.uint8)
     for p in placements:
-        m = rotate_mask(pieces[p.piece], p.angle)
+        m, _ = rotate_mask(pieces[p.piece], p.angle)
         plates[p.plate, p.row : p.row + m.shape[0], p.col : p.col + m.shape[1]] += m
     return plates
 
@@ -61,14 +61,14 @@ def test_bottom_left_picks_lowest_row_then_col(legal_positions, expected):
     ],
 )
 def test_rotate_mask_right_angles(angle, expected_shape):
-    rotated = rotate_mask(solid(2, 5), angle)
+    rotated, _ = rotate_mask(solid(2, 5), angle)
     assert rotated.shape == expected_shape
     assert rotated.all()  # solid rectangle stays solid at right angles
 
 
 def test_rotate_mask_45deg_preserves_area_and_stays_binary():
     mask = solid(10, 10)
-    rotated = rotate_mask(mask, 45)
+    rotated, _ = rotate_mask(mask, 45)
     assert set(np.unique(rotated)) <= {0, 1}
     # Conservative binarization: rotation may grow the footprint (collision
     # safety) but must never lose pixels; growth is bounded by the perimeter.
@@ -126,3 +126,47 @@ def test_obstacle_blocks_exactly_the_overlapping_anchors():
     blocked = np.zeros((8, 8), bool)
     blocked[2:5, 2:5] = True
     assert (legal == ~blocked).all()
+
+
+def _asym_mask():
+    m = np.zeros((15, 25), np.uint8)
+    m[2:13, 3:22] = 1
+    m[2:5, 3:8] = 0  # notch: no rotational symmetry
+    return m
+
+
+@pytest.mark.parametrize("angle", [0.0, 90.0, 180.0, 270.0, 30.0, 45.0, 137.5])
+def test_rotate_affine_maps_content_into_content(angle):
+    mask = _asym_mask()
+    rotated, aff = rotate_mask(mask, angle)
+    rr, cc = np.nonzero(mask)
+    pts = aff @ np.vstack([cc, rr, np.ones_like(cc)])  # (x', y') columns
+    xs, ys = np.round(pts[0]).astype(int), np.round(pts[1]).astype(int)
+    assert (xs >= 0).all() and (ys >= 0).all()
+    assert (xs < rotated.shape[1]).all() and (ys < rotated.shape[0]).all()
+    # binarization only GROWS the mask: each mapped point must hit an on-pixel
+    # within its 3x3 neighborhood (exact pixel for right angles)
+    if angle % 90 == 0:
+        assert rotated[ys, xs].all()
+    else:
+        padded = np.pad(rotated, 1)
+        hit = np.zeros(len(xs), bool)
+        for dy in (0, 1, 2):
+            for dx in (0, 1, 2):
+                hit |= padded[ys + dy, xs + dx].astype(bool)
+        assert hit.all()
+
+
+@pytest.mark.parametrize("angle", [0.0, 90.0, 30.0, 137.5])
+def test_rotate_affine_is_rigid(angle):
+    _, aff = rotate_mask(_asym_mask(), angle)
+    lin = aff[:, :2]
+    np.testing.assert_allclose(lin @ lin.T, np.eye(2), atol=1e-9)
+    assert np.linalg.det(lin) > 0
+
+
+@pytest.mark.parametrize("angle", [90.0, 30.0])
+def test_rotate_output_bbox_is_tight(angle):
+    rotated, _ = rotate_mask(_asym_mask(), angle)
+    assert rotated[0].any() and rotated[-1].any()
+    assert rotated[:, 0].any() and rotated[:, -1].any()

@@ -4,12 +4,12 @@ The single place where packer/printer config (working resolution, minimum
 spacing) is applied to intrinsic cached footprints (ADR-009).
 """
 
+import math
+
 import cv2
 import numpy as np
 
-from plate_packer.footprint_io import FootprintDoc
-
-_RATIO_TOL = 1e-6
+from plate_packer.footprint_io import RES_RATIO_TOL, FootprintDoc
 
 
 def conservative_downsample(mask: np.ndarray, factor: int) -> np.ndarray:
@@ -34,14 +34,30 @@ def dilate(mask: np.ndarray, r_px: int) -> np.ndarray:
     return cv2.dilate(padded, kernel)
 
 
-def prepare_mask(doc: FootprintDoc, spacing_mm: float, working_res_mm: float) -> np.ndarray:
+def dilation_radius_px(spacing_mm: float, working_res_mm: float) -> int:
+    """Per-piece dilation radius. Pieces pack dilated-vs-dilated, so each side
+    contributes half of spacing_mm, the TRUE minimum inter-piece gap (ADR-010)."""
+    if spacing_mm <= 0:
+        return 0
+    return math.ceil(spacing_mm / 2 / working_res_mm)
+
+
+def prepare_mask(
+    doc: FootprintDoc, spacing_mm: float, working_res_mm: float
+) -> tuple[np.ndarray, tuple[float, float]]:
+    """Returns (mask, origin_mm): origin_mm is the XY of the prepared mask's
+    pixel (0,0). Dilation pads all sides, shifting it by -r_px*res per axis;
+    conservative downsample keeps blocks anchored at pixel 0 (no shift)."""
     ratio = working_res_mm / doc.res_mm_per_px
-    if abs(ratio - round(ratio)) > _RATIO_TOL or ratio < 1:
+    if abs(ratio - round(ratio)) > RES_RATIO_TOL or ratio < 1:
         raise ValueError(
             f"working res {working_res_mm} must be an integer multiple "
             f"of canonical res {doc.res_mm_per_px}"
         )
     mask = conservative_downsample(doc.masks[0], round(ratio))
-    if spacing_mm > 0:
-        mask = dilate(mask, max(1, round(spacing_mm / working_res_mm)))
-    return mask
+    origin = (float(doc.origin_mm[0]), float(doc.origin_mm[1]))
+    r_px = dilation_radius_px(spacing_mm, working_res_mm)
+    if r_px:
+        mask = dilate(mask, r_px)
+        origin = (origin[0] - r_px * working_res_mm, origin[1] - r_px * working_res_mm)
+    return mask, origin

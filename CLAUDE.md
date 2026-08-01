@@ -24,7 +24,7 @@ Only then present the merge options.
 
 ## Project Status
 
-Working package (`src/plate_packer/`, uv-managed, hatchling src layout) with pytest suite and GitHub Actions CI. Implemented: footprint extraction (`footprint.py`), greedy packer (`packer.py`), content-addressed footprint cache per the stl_curator contract (`footprint_io.py`, ADR-009), dilate-on-load (`loading.py`), and the `plate-packer footprints` CLI (`cli.py`). Next up: export (transforms + merged STL per plate — see the Coordinate Landmine) and the merged-shadow self-check. The original design doc is `PLATEPACKER_SEED.md`; `example_stls/` is a junction to real supported STLs (gitignored — copyrighted).
+Working package (`src/plate_packer/`, uv-managed, hatchling src layout) with pytest suite and GitHub Actions CI. Implemented: footprint extraction (`footprint.py`), greedy packer (`packer.py`), content-addressed footprint cache per the stl_curator contract (`footprint_io.py`, ADR-009), dilate-on-load with origin tracking (`loading.py`, ADR-010 spacing semantics), config (`config.py`), exact-transform export + runtime merged-shadow self-check (`export.py`), and the CLI (`cli.py`: `footprints`, `pack`). The v1 loop is complete: folder of STLs → `plate_NN.stl` + report. Next candidates: real-pack validation on Tome of Demons, PNG layout previews / 3MF (v1.5), improvement loop. The original design doc is `PLATEPACKER_SEED.md`; `example_stls/` is a junction to real supported STLs (gitignored — copyrighted).
 
 ## What This Is
 

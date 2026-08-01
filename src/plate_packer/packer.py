@@ -30,7 +30,7 @@ def pack(pieces, plate_shape, rotations=1, plate_mask=None, choose=None):
     empty = plate_mask.copy() if plate_mask is not None else np.zeros(plate_shape, np.uint8)
     angles = [i * 360.0 / rotations for i in range(rotations)]
     # Pre-rotate every piece once; rotation choice is per-placement.
-    rotated = [{a: rotate_mask(p, a) for a in angles} for p in pieces]
+    rotated = [{a: rotate_mask(p, a)[0] for a in angles} for p in pieces]
 
     # Validation before any packing: every piece must fit an empty plate.
     for i, variants in enumerate(rotated):
@@ -88,14 +88,49 @@ def legal_placement_map(plate: np.ndarray, piece: np.ndarray) -> np.ndarray:
     return overlap < _OVERLAP_THRESHOLD
 
 
-def rotate_mask(mask: np.ndarray, angle_deg: float) -> np.ndarray:
-    """Rotate a binary mask about its center, expanding the canvas and
-    cropping to the content's bounding box. Nearest-neighbor keeps it binary."""
+def _crop_to_content_bbox(binary: np.ndarray) -> tuple[np.ndarray, int, int]:
+    """Crop a binary mask to its content bounding box.
+
+    Returns (cropped, r0, c0) where r0, c0 are the offsets of the crop.
+    """
+    if not binary.any():
+        raise ValueError("cannot crop an empty mask")
+    rows, cols = binary.any(axis=1), binary.any(axis=0)
+    r0, c0 = int(np.argmax(rows)), int(np.argmax(cols))
+    cropped = binary[
+        r0 : len(rows) - np.argmax(rows[::-1]),
+        c0 : len(cols) - np.argmax(cols[::-1]),
+    ]
+    return cropped, r0, c0
+
+
+def rotate_mask(mask: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndarray]:
+    """Rotate a binary mask about its center, expanding the canvas and cropping
+    to the content bbox. Returns (rotated, affine): affine is the 2x3 map from
+    input px (x=col, y=row) to output px, crop included.
+
+    The linear part is [[cos, sin], [-sin, cos]] in (col,row) coords on BOTH
+    paths (rot90 and warpAffine agree). Export derives world rotation from this
+    affine; the nominal angle's sign convention is never trusted downstream."""
     angle_deg %= 360
-    if angle_deg % 90 == 0:
-        # Exact and lossless at right angles; warpAffine clips edge pixels.
-        return np.ascontiguousarray(np.rot90(mask, int(angle_deg // 90)))
     h, w = mask.shape
+    if angle_deg % 90 == 0:
+        k = int(angle_deg // 90)
+        # Exact and lossless at right angles; warpAffine clips edge pixels.
+        rotated = np.ascontiguousarray(np.rot90(mask, k))
+        # Crop to content bbox even for right angles to ensure tight output
+        cropped, r0, c0 = _crop_to_content_bbox(rotated)
+        # Compute affine for this right angle with crop adjustment
+        affines_base = {
+            0: np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            1: np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, w - 1.0]]),
+            2: np.array([[-1.0, 0.0, w - 1.0], [0.0, -1.0, h - 1.0]]),
+            3: np.array([[0.0, -1.0, h - 1.0], [1.0, 0.0, 0.0]]),
+        }
+        aff = affines_base[k].copy().astype(np.float64)
+        aff[0, 2] -= c0
+        aff[1, 2] -= r0
+        return cropped, aff
     m = cv2.getRotationMatrix2D((w / 2, h / 2), angle_deg, 1.0)
     cos, sin = abs(m[0, 0]), abs(m[0, 1])
     new_w = int(np.ceil(w * cos + h * sin)) + 2
@@ -107,11 +142,10 @@ def rotate_mask(mask: np.ndarray, angle_deg: float) -> np.ndarray:
     # space in the collision map.
     rotated = cv2.warpAffine(mask.astype(np.float32), m, (new_w, new_h), flags=cv2.INTER_LINEAR)
     binary = (rotated > 0).astype(np.uint8)
-    rows, cols = binary.any(axis=1), binary.any(axis=0)
-    return binary[
-        np.argmax(rows) : len(rows) - np.argmax(rows[::-1]),
-        np.argmax(cols) : len(cols) - np.argmax(cols[::-1]),
-    ]
+    cropped, r0, c0 = _crop_to_content_bbox(binary)
+    m[0, 2] -= c0
+    m[1, 2] -= r0
+    return cropped, m
 
 
 def bottom_left(legal: np.ndarray) -> tuple[int, int] | None:

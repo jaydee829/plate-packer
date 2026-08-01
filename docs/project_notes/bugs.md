@@ -14,6 +14,12 @@ This file tracks project bugs, their root causes, solutions, and prevention stra
 
 <!-- Add new entries below in reverse-chronological order (newest first). -->
 
+### 2026-08-01 - ruff format checks python code blocks inside markdown docs
+- **Issue**: `ruff format --check .` (the CI gate) failed on `docs/superpowers/plans/2026-08-01-export.md` — a docs-only file.
+- **Root Cause**: ruff formats fenced python code blocks in .md files; the plan's hand-written snippets weren't format-clean.
+- **Solution**: `uv run ruff format <file>` on the plan doc (commit 68b6cc7).
+- **Prevention**: Run the format check before committing ANY file containing python fences, including docs/ markdown; or format plan docs at write time.
+
 ### 2026-08-01 - Typer single-command app made tests pass locally, fail on CI
 - **Issue**: All 5 CLI tests exited 2 (usage error) on CI while passing locally; e2e had "verified" the CLI.
 - **Root Cause**: `typer.Typer()` with exactly one registered command collapses it into the root command, so the token `footprints` was parsed as the first `paths` argument. Locally it passed by accident: the gitignored `./footprints/` output dir existed in cwd, satisfying `exists=True`.

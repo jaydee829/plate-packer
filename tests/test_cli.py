@@ -11,6 +11,33 @@ from plate_packer.footprint_io import SCHEMA_VERSION, doc_path, file_sha256
 
 runner = CliRunner()
 
+TEST_CONFIG = """
+[printer]
+plate_mm = [40.0, 30.0]
+build_height_mm = 50.0
+
+[packing]
+working_res_mm = 0.1
+spacing_mm = 1.0
+rotations = 1
+"""
+
+
+def _write_box(path, w=10.0, d=10.0, h=5.0):
+    b = trimesh.creation.box(extents=(w, d, h))
+    b.apply_translation((w / 2, d / 2, h / 2))
+    b.export(path)
+
+
+def _setup(tmp_path, monkeypatch, boxes=((10, 10, 5), (10, 10, 5))):
+    monkeypatch.chdir(tmp_path)
+    src = tmp_path / "models"
+    src.mkdir()
+    for i, (w, d, h) in enumerate(boxes):
+        _write_box(src / f"box{i}.stl", w, d, h)
+    (tmp_path / "config.toml").write_text(TEST_CONFIG, encoding="utf-8")
+    return src
+
 
 @pytest.fixture
 def stl_tree(tmp_path):
@@ -90,3 +117,65 @@ def test_footprints_subcommand_works_without_local_footprints_dir(stl_tree, tmp_
     result = runner.invoke(app, ["footprints", str(stl_tree), "--footprints-dir", str(out)])
     assert result.exit_code == 0
     assert "2 written" in result.output
+
+
+def test_pack_writes_plates_and_report(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src)])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "plates" / "plate_01.stl").exists()
+    report = (tmp_path / "plates" / "report.txt").read_text(encoding="utf-8")
+    assert "plate_01.stl" in report
+    assert "box0.stl" in report and "box1.stl" in report
+
+
+def test_pack_verifies_by_default(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src)])
+    assert "verify" in result.output.lower()
+
+
+def test_pack_no_verify_skips(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src), "--no-verify"])
+    assert result.exit_code == 0, result.output
+    assert "verify" not in result.output.lower()
+
+
+def test_pack_too_tall_piece_listed_and_aborts(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch, boxes=((10, 10, 5), (10, 10, 60)))
+    result = runner.invoke(app, ["pack", str(src)])
+    assert result.exit_code == 1
+    assert "box1.stl" in result.output and "height" in result.output.lower()
+    assert not (tmp_path / "plates").exists()
+
+
+def test_pack_oversized_piece_listed_and_aborts(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch, boxes=((10, 10, 5), (60, 40, 5)))
+    result = runner.invoke(app, ["pack", str(src)])
+    assert result.exit_code == 1
+    assert "box1.stl" in result.output and "fit" in result.output.lower()
+
+
+def test_pack_collects_all_errors(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch, boxes=((10, 10, 60), (60, 40, 5)))
+    result = runner.invoke(app, ["pack", str(src)])
+    assert result.exit_code == 1
+    assert "box0.stl" in result.output and "box1.stl" in result.output
+
+
+def test_pack_empty_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    empty = tmp_path / "models"
+    empty.mkdir()
+    result = runner.invoke(app, ["pack", str(empty)])
+    assert result.exit_code == 0
+    assert "no STL/OBJ files found" in result.output
+
+
+def test_pack_spillover_to_second_plate(tmp_path, monkeypatch):
+    # Four 18x18 pieces + 1mm gaps cannot all fit a 40x30 plate.
+    src = _setup(tmp_path, monkeypatch, boxes=((18, 18, 5),) * 4)
+    result = runner.invoke(app, ["pack", str(src)])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "plates" / "plate_02.stl").exists()

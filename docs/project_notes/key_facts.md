@@ -31,8 +31,11 @@ This file tracks important project configuration, constants, and environment det
 ## Deferred Hardening (do when ADR-008 escalates extraction to multiprocessing)
 - `footprint_io.save_doc` uses a deterministic tmp filename (`<sha>.json.tmp`). Two workers racing on the same input could collide mid-write. Switch to a process-unique tmp name (tempfile.mkstemp-style, same directory) BEFORE parallelizing extraction. (PR #1 review, 2026-08-01 — not a live issue while extraction is serial.)
 
-## Export-Milestone TODO (from footprint-io final review, 2026-08-01)
-- `prepare_mask` returns only the mask and discards the origin shift its dilation introduces (pads all sides → origin moves by −r·working_res; ragged-edge downsample pads bottom/right only → origin unchanged). The export milestone must have `prepare_mask` return the origin offset rather than callers re-deriving it (see the shim in `scripts/extract_footprint.py` for intended semantics).
+## Export & Self-Check (v1, 2026-08-01)
+- **CLI**: `plate-packer pack PATHS... [--config] [--out] [--footprints-dir] [--no-verify] [--force]` → `plate_NN.stl` + `report.txt`. Default printer config: Anycubic Photon Mono X 6K (197×122 mm, Z 245) — all knobs in `config.toml`.
+- **Self-check sensitivity floor**: verify_plate asserts shadow ⊆ *dilated* occupancy, so misplacements under spacing/2 mm pass silently; an entirely missing piece also passes (empty shadow). "verify ok" ≠ sub-millimeter placement proof.
+- **`--copies` landmine (future)**: cli/export index `transforms[placement.piece]`, valid only while pack() emits exactly one placement per piece. Copies require per-placement transforms.
+- **Report rotation values** are true world rotation from the composed transform; nominal `Placement.angle` 90° prints as 270° (rot90/warpAffine rotate clockwise in the row-0=min-Y frame). Intentional — do not "fix".
 
 ## Domain Constants & Conventions
 - **Raster resolution**: ~0.05–0.1 mm/px, config knob; tune empirically (0.1 mm/px on a ~200×130 mm plate → ~2000×1300 masks).
