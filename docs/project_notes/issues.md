@@ -16,8 +16,10 @@ This file tracks work history and ticket references.
 - **Status**: Completed (branch fix/verify-oom, awaiting merge)
 - **Description**: Packed 8 Armaros parts + Decataur P1 + Tamareth P2 + Vulduk P2 + Kabeiroth P2 + Muzulk P2/P3 + Vanguard P1 (all supported, bases included). 30 pieces → 4 plates at 54–62% occupancy, all plates verify ok, mixed 45°-family rotations used. Timing on user's machine: extraction 204s (29 meshes), pack+export+verify+report 477s.
 - **URL**: https://github.com/jaydee829/plate-packer
-- **Notes**: Found + fixed verify-stage OOM (see bugs.md). Plates in ./plates/ for user eyeball; selection list in pack_selection.txt. — pack CLI + exact transforms + runtime self-check
-- **Status**: Completed (branch `export`, awaiting merge)
+- **Notes**: Found + fixed verify-stage OOM (see bugs.md). Plates in ./plates/ for user eyeball; selection list in pack_selection.txt.
+
+### 2026-08-01 - EXPORT: v1 loop complete — pack CLI + exact transforms + runtime self-check
+- **Status**: Completed (merged, PR #3)
 - **Description**: SDD execution of the export milestone: `config.py` (TOML, Photon Mono X 6K defaults), `prepare_mask` returns origin (ADR-010 spacing/2 dilation), `rotate_mask` returns its px→px affine incl. crop, `export.py` (placement_transform 4×4 composition, merged plate STLs, verify_plate subset self-check), `plate-packer pack` command. 141 tests.
 - **URL**: https://github.com/jaydee829/plate-packer
 - **Notes**: Final review (fable): coordinate chain verified analytically + adversarial probe at 6 angles — READY TO MERGE. Known self-check blind spots documented in key_facts.md. `--copies` will break transforms-per-piece indexing (see key_facts TODO).

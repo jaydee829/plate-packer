@@ -67,6 +67,10 @@ def read_stl_triangles(path: Path) -> np.ndarray:
     if len(count_bytes) == 4:
         n = int(np.frombuffer(count_bytes, "<u4")[0])
         if 84 + 50 * n == size:  # authoritative binary-STL signature
+            # Field access is a view: the full 50-byte records (normals,
+            # attrs included) stay resident, ~1.4x the bare vertex data.
+            # A .copy() would trim that but spike to 86n bytes transiently;
+            # either way the bound is ~file size, far below trimesh's 3-4x.
             return np.fromfile(path, dtype=_STL_RECORD, count=n, offset=84)["verts"]
     return np.asarray(load_piece_mesh(path).triangles, dtype=np.float32)
 
