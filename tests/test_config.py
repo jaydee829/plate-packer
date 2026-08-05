@@ -99,3 +99,44 @@ def test_working_res_triple_of_canonical_ok(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text("[packing]\nworking_res_mm = 0.15\n", encoding="utf-8")
     assert load_config(p).working_res_mm == 0.15
+
+
+def test_improvement_defaults():
+    cfg = PackConfig()
+    assert cfg.improve_budget_s == 2700.0
+    assert cfg.min_improvement == 0.005
+    assert cfg.patience == 30
+    assert cfg.seed == 0
+    assert cfg.placement == "contact"
+
+
+@pytest.mark.parametrize(
+    "toml_body, bad_key",
+    [
+        ("[packing]\nimprove_budget_s = -1", "improve_budget_s"),
+        ("[packing]\nmin_improvement = -0.1", "min_improvement"),
+        ("[packing]\npatience = 0", "patience"),
+        ('[packing]\nplacement = "wizard"', "placement"),
+    ],
+    ids=["negative-budget", "negative-min-improvement", "zero-patience", "unknown-placement"],
+)
+def test_improvement_knob_validation(tmp_path, toml_body, bad_key):
+    p = tmp_path / "config.toml"
+    p.write_text(toml_body, encoding="utf-8")
+    with pytest.raises(ValueError, match=bad_key):
+        load_config(p)
+
+
+def test_improvement_knobs_load_from_toml(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[packing]\nimprove_budget_s = 60\nmin_improvement = 0.01\n"
+        'patience = 5\nseed = 42\nplacement = "bottom_left"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert cfg.improve_budget_s == 60.0
+    assert cfg.min_improvement == 0.01
+    assert cfg.patience == 5
+    assert cfg.seed == 42
+    assert cfg.placement == "bottom_left"

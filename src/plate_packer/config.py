@@ -17,6 +17,11 @@ class PackConfig:
     rotations: int = 8
     footprints_dir: Path = Path("footprints")
     output_dir: Path = Path("plates")
+    improve_budget_s: float = 2700.0
+    min_improvement: float = 0.005
+    patience: int = 30
+    seed: int = 0
+    placement: str = "contact"
 
 
 def load_config(path: Path | None = None) -> PackConfig:
@@ -35,6 +40,11 @@ def load_config(path: Path | None = None) -> PackConfig:
         rotations=int(packing.get("rotations", PackConfig.rotations)),
         footprints_dir=Path(paths.get("footprints_dir", PackConfig.footprints_dir)),
         output_dir=Path(paths.get("output_dir", PackConfig.output_dir)),
+        improve_budget_s=float(packing.get("improve_budget_s", PackConfig.improve_budget_s)),
+        min_improvement=float(packing.get("min_improvement", PackConfig.min_improvement)),
+        patience=int(packing.get("patience", PackConfig.patience)),
+        seed=int(packing.get("seed", PackConfig.seed)),
+        placement=str(packing.get("placement", PackConfig.placement)),
     )
     _validate(cfg)
     return cfg
@@ -59,3 +69,11 @@ def _validate(cfg: PackConfig) -> None:
         raise ValueError("packing.edge_margin_mm must be >= 0")
     if cfg.rotations < 1:
         raise ValueError("packing.rotations must be >= 1")
+    if cfg.improve_budget_s < 0:
+        raise ValueError("packing.improve_budget_s must be >= 0")
+    if cfg.min_improvement < 0:
+        raise ValueError("packing.min_improvement must be >= 0")
+    if cfg.patience < 1:
+        raise ValueError("packing.patience must be >= 1")
+    if cfg.placement not in ("contact", "bottom_left"):
+        raise ValueError('packing.placement must be "contact" or "bottom_left"')
