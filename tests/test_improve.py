@@ -3,7 +3,19 @@
 import numpy as np
 import pytest
 
-from plate_packer.improve import ImproveResult, falkenauer, plate_fills
+from plate_packer.improve import (
+    ImproveResult,
+    _move_random_reinsert,
+    _move_random_swap,
+    _move_targeted_reinsert,
+    _move_targeted_swap,
+    _move_window_shuffle,
+    _reinsert,
+    falkenauer,
+    perturb,
+    plate_fills,
+    shake,
+)
 from plate_packer.packer import Placement
 
 
@@ -49,3 +61,78 @@ def test_improve_result_is_frozen():
     r = ImproveResult([], 1, 0, 0.5, 0.5)
     with pytest.raises(AttributeError):
         r.evaluations = 2
+
+
+def _fixture_placements():
+    # plate 0 (fill 0.9): pieces 0,1 (contacts 8, 2); plate 1 (fill 0.1): piece 2
+    return [
+        Placement(0, 0, 0, 0, 0.0, contact=8.0),
+        Placement(1, 0, 0, 5, 0.0, contact=2.0),
+        Placement(2, 1, 0, 0, 0.0, contact=1.0),
+    ]
+
+
+FILLS = [0.9, 0.1]
+ORDER = [0, 1, 2]
+
+
+@pytest.mark.parametrize(
+    "move",
+    [
+        _move_targeted_reinsert,
+        _move_targeted_swap,
+        _move_random_swap,
+        _move_random_reinsert,
+        _move_window_shuffle,
+    ],
+    ids=["t-reinsert", "t-swap", "r-swap", "r-reinsert", "window"],
+)
+def test_moves_return_valid_permutations(move):
+    rng = np.random.default_rng(42)
+    result = move(ORDER, _fixture_placements(), FILLS, rng)
+    assert sorted(result) == ORDER
+    assert ORDER == [0, 1, 2]  # input never mutated
+
+
+def test_reinsert_moves_element():
+    assert _reinsert([0, 1, 2, 3], 3, 0) == [3, 0, 1, 2]
+
+
+def test_targeted_reinsert_moves_min_fill_plate_piece_earlier():
+    rng = np.random.default_rng(0)
+    result = _move_targeted_reinsert(ORDER, _fixture_placements(), FILLS, rng)
+    # piece 2 (only piece on the min-fill plate) must move earlier than pos 2
+    assert result.index(2) < 2
+
+
+def test_targeted_swap_picks_lowest_contact_of_sample():
+    # SAMPLE (5) >= population (3): the sample is the whole population, so the
+    # lowest-contact piece (2) is always one side of the swap.
+    rng = np.random.default_rng(0)
+    result = _move_targeted_swap(ORDER, _fixture_placements(), FILLS, rng)
+    assert result.index(2) != ORDER.index(2)
+
+
+def test_targeted_reinsert_single_plate_falls_back():
+    placements = [Placement(0, 0, 0, 0, 0.0), Placement(1, 0, 0, 5, 0.0)]
+    rng = np.random.default_rng(1)
+    result = _move_targeted_reinsert([0, 1], placements, [0.5], rng)
+    assert sorted(result) == [0, 1]
+
+
+def test_window_shuffle_short_order_falls_back():
+    rng = np.random.default_rng(2)
+    result = _move_window_shuffle([0, 1], _fixture_placements()[:2], [0.5], rng)
+    assert sorted(result) == [0, 1]
+
+
+def test_perturb_is_deterministic_per_seed():
+    a = perturb(ORDER, _fixture_placements(), FILLS, np.random.default_rng(7))
+    b = perturb(ORDER, _fixture_placements(), FILLS, np.random.default_rng(7))
+    assert a == b
+
+
+def test_shake_returns_valid_permutation():
+    rng = np.random.default_rng(3)
+    result = shake(ORDER, _fixture_placements(), FILLS, rng)
+    assert sorted(result) == ORDER
