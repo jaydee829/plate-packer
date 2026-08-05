@@ -30,7 +30,7 @@ Scoring only ranks the provably legal anchors.
 **Contact ring.** For a rotated piece mask `m` (uint8, tight-cropped):
 
 ```python
-padded = np.pad(m, 1)                              # (h+2, w+2)
+padded = np.pad(m, 1)  # (h+2, w+2)
 ring = cv2.dilate(padded, np.ones((3, 3), np.uint8)) - padded
 ```
 
@@ -38,10 +38,9 @@ ring = cv2.dilate(padded, np.ones((3, 3), np.uint8)) - padded
 plate_mask's unusable regions as occupied:
 
 ```python
-attraction = np.pad(occ, 1, constant_values=1)     # 1px frame = plate-edge contact
-raw = fftconvolve(attraction.astype(np.float32),
-                  ring[::-1, ::-1].astype(np.float32), "valid")
-contact = np.rint(raw)                             # (H-h+1, W-w+1) — same shape as legality map
+attraction = np.pad(occ, 1, constant_values=1)  # 1px frame = plate-edge contact
+raw = fftconvolve(attraction.astype(np.float32), ring[::-1, ::-1].astype(np.float32), "valid")
+contact = np.rint(raw)  # (H-h+1, W-w+1) — same shape as legality map
 ```
 
 `contact[r, c]` = count of the piece's 1-px halo pixels touching occupied pixels
