@@ -48,6 +48,33 @@ def load_piece_mesh(path: Path) -> trimesh.Trimesh:
     return mesh
 
 
+_STL_RECORD = np.dtype([("normal", "<f4", 3), ("verts", "<f4", (3, 3)), ("attr", "<u2")])
+
+
+def read_stl_triangles(path: Path) -> np.ndarray:
+    """(n, 3, 3) float32 triangle soup from an STL, without building a mesh.
+
+    Binary STLs (everything export_plates writes) are read directly with
+    numpy: trimesh's loader materializes a Scene and deep-copies the merged
+    mesh, which doubles peak memory on multi-hundred-MB plates and OOMed the
+    first real-world verify run. Non-binary files fall back to trimesh.
+    """
+    path = Path(path)
+    size = path.stat().st_size
+    with open(path, "rb") as fh:
+        fh.seek(80)
+        count_bytes = fh.read(4)
+    if len(count_bytes) == 4:
+        n = int(np.frombuffer(count_bytes, "<u4")[0])
+        if 84 + 50 * n == size:  # authoritative binary-STL signature
+            # Field access is a view: the full 50-byte records (normals,
+            # attrs included) stay resident, ~1.4x the bare vertex data.
+            # A .copy() would trim that but spike to 86n bytes transiently;
+            # either way the bound is ~file size, far below trimesh's 3-4x.
+            return np.fromfile(path, dtype=_STL_RECORD, count=n, offset=84)["verts"]
+    return np.asarray(load_piece_mesh(path).triangles, dtype=np.float32)
+
+
 def export_plates(files, placements, transforms, output_dir: Path) -> list[Path]:
     """One merged binary STL per plate; meshes loaded and freed plate-by-plate
     so memory stays bounded to a single plate. Z is never modified."""
@@ -75,7 +102,8 @@ def _rasterize_plate_shadow(mesh, working_res_mm, plate_mm, tol_px):
     (canvas, n_oob_vertices): vertices beyond the plate (+/- tol_px slack)."""
     h_px = round(plate_mm[1] / working_res_mm)
     w_px = round(plate_mm[0] / working_res_mm)
-    tris = mesh.triangles[:, :, :2]
+    tris3 = mesh if isinstance(mesh, np.ndarray) else mesh.triangles
+    tris = tris3[:, :, :2]
     finite = np.isfinite(tris).all(axis=(1, 2))
     tris = tris[finite]
     tris_px = np.round((tris + np.array(plate_mm) / 2) / working_res_mm).astype(np.int64)
@@ -96,7 +124,11 @@ def _rasterize_plate_shadow(mesh, working_res_mm, plate_mm, tol_px):
 def verify_plate(plate_mesh, occupancy, working_res_mm, plate_mm, spacing_mm) -> int:
     """Merged-shadow self-check: count actual-shadow pixels outside the
     predicted occupancy (subset assertion -- occupancy legitimately includes
-    spacing margins). 0 = pass. spacing == 0 gets 1 px rounding tolerance."""
+    spacing margins). 0 = pass. spacing == 0 gets 1 px rounding tolerance.
+
+    plate_mesh: a Trimesh, or a raw (n, 3, 3) triangle array (see
+    read_stl_triangles -- the CLI feeds triangles directly to keep peak
+    memory bounded on large merged plates)."""
     tol_px = 0 if spacing_mm > 0 else 1
     shadow, n_oob = _rasterize_plate_shadow(plate_mesh, working_res_mm, plate_mm, tol_px)
     predicted = occupancy

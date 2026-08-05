@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 import trimesh
 
-from plate_packer.export import export_plates, placement_transform, verify_plate
+from plate_packer.export import (
+    export_plates,
+    placement_transform,
+    read_stl_triangles,
+    verify_plate,
+)
 from plate_packer.footprint import extract_footprint
 from plate_packer.packer import Placement, rotate_mask
 
@@ -168,3 +173,48 @@ def test_verify_plate_catches_shifted_rotated_placement(angle):
     occ = np.zeros(PLATE_SHAPE, np.uint8)
     occ[row : row + rmask.shape[0], col : col + rmask.shape[1]] |= rmask
     assert verify_plate(moved, occ, RES, PLATE, 2.0) > 0
+
+
+def test_read_stl_triangles_matches_trimesh(tmp_path):
+    """Binary fast path returns the same triangle soup trimesh would."""
+    box = _box()
+    f = tmp_path / "box.stl"
+    box.export(f)  # trimesh writes binary STL for .stl
+    tris = read_stl_triangles(f)
+    assert tris.shape == box.triangles.shape
+    got = np.sort(tris.reshape(-1, 9), axis=0)
+    expected = np.sort(np.asarray(box.triangles, dtype=np.float32).reshape(-1, 9), axis=0)
+    np.testing.assert_allclose(got, expected, atol=1e-6)
+
+
+def test_read_stl_triangles_ascii_fallback(tmp_path):
+    box = _box()
+    f = tmp_path / "box_ascii.stl"
+    f.write_bytes(trimesh.exchange.stl.export_stl_ascii(box).encode())
+    tris = read_stl_triangles(f)
+    assert tris.shape == box.triangles.shape
+
+
+def test_verify_plate_accepts_raw_triangle_array():
+    """The CLI verify path feeds raw (n,3,3) triangles, not a Trimesh."""
+    mesh, occ = _shadow_setup()
+    assert verify_plate(np.asarray(mesh.triangles), occ, RES, PLATE, 0.0) == 0
+
+
+def test_read_stl_triangles_empty_file_returns_no_triangles(tmp_path):
+    f = tmp_path / "empty.stl"
+    f.write_bytes(b"")
+    assert read_stl_triangles(f).shape == (0, 3, 3)
+
+
+def test_read_stl_triangles_truncated_binary_is_not_misparsed(tmp_path):
+    """A binary header claiming 1000 triangles over a 10-byte body must fail
+    the size check and route to the fallback loader -- never be parsed as
+    1000 garbage triangles by the fast path."""
+    f = tmp_path / "trunc.stl"
+    f.write_bytes(b"\x00" * 80 + np.uint32(1000).tobytes() + b"\x00" * 10)
+    try:
+        tris = read_stl_triangles(f)
+    except Exception:  # the fallback loader may raise; that is acceptable
+        return
+    assert len(tris) == 0
