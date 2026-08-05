@@ -5,6 +5,9 @@ import pytest
 
 from plate_packer.packer import (
     bottom_left,
+    contact_first,
+    contact_map,
+    contact_ring,
     legal_placement_map,
     pack,
     rotate_mask,
@@ -170,3 +173,81 @@ def test_rotate_output_bbox_is_tight(angle):
     rotated, _ = rotate_mask(_asym_mask(), angle)
     assert rotated[0].any() and rotated[-1].any()
     assert rotated[:, 0].any() and rotated[:, -1].any()
+
+
+# --- contact scoring (Task 1) ---
+
+RING_1PX = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], np.uint8)
+RING_2X2 = np.array([[1, 1, 1, 1], [1, 0, 0, 1], [1, 0, 0, 1], [1, 1, 1, 1]], np.uint8)
+# L-shape [[1,0],[1,1]] padded to 4x4; ring = dilation minus mask.
+RING_L = np.array([[1, 1, 1, 0], [1, 0, 1, 1], [1, 0, 0, 1], [1, 1, 1, 1]], np.uint8)
+
+
+@pytest.mark.parametrize(
+    "mask, expected",
+    [
+        (np.ones((1, 1), np.uint8), RING_1PX),
+        (np.ones((2, 2), np.uint8), RING_2X2),
+        (np.array([[1, 0], [1, 1]], np.uint8), RING_L),
+    ],
+    ids=["single-pixel", "square-2x2", "L-shape"],
+)
+def test_contact_ring_known_shapes(mask, expected):
+    np.testing.assert_array_equal(contact_ring(mask), expected)
+
+
+@pytest.mark.parametrize(
+    "anchor, expected",
+    [((0, 0), 5), ((0, 1), 3), ((1, 1), 0), ((0, 3), 5), ((3, 3), 5)],
+    ids=["corner-tl", "top-edge", "interior", "corner-tr", "corner-br"],
+)
+def test_contact_map_empty_plate_border_contact(anchor, expected):
+    plate = np.zeros((4, 4), np.uint8)
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    cmap = contact_map(plate, ring)
+    assert cmap.shape == (4, 4)
+    assert cmap[anchor] == expected
+
+
+@pytest.mark.parametrize(
+    "anchor, expected",
+    [((1, 1), 1), ((2, 1), 1), ((2, 2), 0), ((0, 0), 5)],
+    ids=["diagonal-neighbour", "side-neighbour", "on-top-center-excluded", "far-corner"],
+)
+def test_contact_map_single_occupied_pixel(anchor, expected):
+    plate = np.zeros((5, 5), np.uint8)
+    plate[2, 2] = 1
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    assert contact_map(plate, ring)[anchor] == expected
+
+
+def test_contact_first_picks_max_contact():
+    legal = np.ones((2, 2), bool)
+    contact = np.array([[0.0, 1.0], [2.0, 0.0]])
+    assert contact_first(legal, contact) == (1, 0)
+
+
+def test_contact_first_tie_breaks_bottom_left():
+    legal = np.ones((2, 2), bool)
+    contact = np.array([[1.0, 0.0], [1.0, 0.0]])
+    assert contact_first(legal, contact) == (0, 0)
+
+
+def test_contact_first_ignores_illegal_high_scores():
+    legal = np.array([[False, True], [True, False]])
+    contact = np.array([[9.0, 1.0], [2.0, 0.0]])
+    assert contact_first(legal, contact) == (1, 0)
+
+
+def test_contact_first_returns_none_when_nothing_legal():
+    assert contact_first(np.zeros((3, 3), bool), np.ones((3, 3))) is None
+
+
+def test_contact_first_declares_uses_contact():
+    assert getattr(contact_first, "uses_contact", False) is True
+
+
+def test_bottom_left_ignores_contact_argument():
+    legal = np.ones((2, 2), bool)
+    contact = np.array([[0.0, 0.0], [9.0, 9.0]])
+    assert bottom_left(legal, contact) == (0, 0)

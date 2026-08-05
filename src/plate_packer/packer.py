@@ -88,6 +88,33 @@ def legal_placement_map(plate: np.ndarray, piece: np.ndarray) -> np.ndarray:
     return overlap < _OVERLAP_THRESHOLD
 
 
+def contact_ring(mask: np.ndarray) -> np.ndarray:
+    """1-px halo around a tight-cropped mask; shape (h+2, w+2)."""
+    padded = np.pad(mask, 1).astype(np.uint8)
+    return cv2.dilate(padded, np.ones((3, 3), np.uint8)) - padded
+
+
+def contact_map(plate: np.ndarray, ring: np.ndarray) -> np.ndarray:
+    """Contact score at every anchor: halo pixels touching occupancy or the
+    plate border. Same anchor coordinates and shape as legal_placement_map;
+    np.rint collapses FFT noise so score ties are exact."""
+    attraction = np.pad(plate, 1, constant_values=1)
+    raw = fftconvolve(attraction.astype(np.float32), ring[::-1, ::-1].astype(np.float32), "valid")
+    return np.rint(raw)
+
+
+def contact_first(legal: np.ndarray, contact: np.ndarray) -> tuple[int, int] | None:
+    """Legal anchor with the highest contact score; ties resolve bottom-left
+    (argmax first-occurrence in row-major order IS lowest row, then col)."""
+    if not legal.any():
+        return None
+    r, c = np.unravel_index(int(np.argmax(np.where(legal, contact, -1.0))), legal.shape)
+    return int(r), int(c)
+
+
+contact_first.uses_contact = True
+
+
 def _crop_to_content_bbox(binary: np.ndarray) -> tuple[np.ndarray, int, int]:
     """Crop a binary mask to its content bounding box.
 
@@ -148,8 +175,11 @@ def rotate_mask(mask: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndar
     return cropped, m
 
 
-def bottom_left(legal: np.ndarray) -> tuple[int, int] | None:
-    """Pick the legal anchor with the lowest row, then lowest column."""
+def bottom_left(legal: np.ndarray, contact: np.ndarray | None = None) -> tuple[int, int] | None:
+    """Pick the legal anchor with the lowest row, then lowest column.
+
+    The contact argument is ignored; it exists to match the contact_first signature.
+    """
     flat = np.flatnonzero(legal)
     if len(flat) == 0:
         return None
