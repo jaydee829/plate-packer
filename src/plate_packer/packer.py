@@ -18,43 +18,63 @@ class Placement:
     row: int  # anchor (top-left) of the rotated mask on the plate
     col: int
     angle: float  # degrees CCW
+    contact: float = 0.0  # chosen anchor's contact score (0.0 under bottom_left)
 
 
-def pack(pieces, plate_shape, rotations=1, plate_mask=None, choose=None):
+def pack(
+    pieces,
+    plate_shape,
+    rotations=1,
+    plate_mask=None,
+    choose=None,
+    prerotated=None,
+    order=None,
+    validate=True,
+):
     """Greedy-pack piece masks onto plates; spill to a new plate when full.
 
     plate_mask pre-encodes unusable plate regions as occupied pixels.
+    prerotated (list of {angle: mask}) skips per-call rotation; order
+    overrides the largest-area-first insertion order; validate=False skips
+    the every-piece-fits-an-empty-plate check (improve() validates once).
     Raises ValueError if a piece cannot fit an empty plate at any rotation.
     """
-    choose = choose or bottom_left
+    choose = choose or contact_first
     empty = plate_mask.copy() if plate_mask is not None else np.zeros(plate_shape, np.uint8)
-    angles = [i * 360.0 / rotations for i in range(rotations)]
-    # Pre-rotate every piece once; rotation choice is per-placement.
-    rotated = [{a: rotate_mask(p, a)[0] for a in angles} for p in pieces]
+    if prerotated is None:
+        angles = [i * 360.0 / rotations for i in range(rotations)]
+        prerotated = [{a: rotate_mask(p, a)[0] for a in angles} for p in pieces]
+    rings = (
+        [{a: contact_ring(m) for a, m in variants.items()} for variants in prerotated]
+        if getattr(choose, "uses_contact", False)
+        else None
+    )
 
-    # Validation before any packing: every piece must fit an empty plate.
-    for i, variants in enumerate(rotated):
-        if not any(_fits(empty, m) for m in variants.values()):
-            raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
+    if validate:
+        for i, variants in enumerate(prerotated):
+            if not any(_fits(empty, m) for m in variants.values()):
+                raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
 
-    order = sorted(range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True)
+    if order is None:
+        order = sorted(range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True)
     plates: list[np.ndarray] = []
     placements: list[Placement] = []
     for i in order:
         target = plate_idx = None
+        piece_rings = rings[i] if rings is not None else None
         for idx, occupancy in enumerate(plates):
-            target = _best_spot(occupancy, rotated[i], choose)
+            target = _best_spot(occupancy, prerotated[i], piece_rings, choose)
             if target:
                 plate_idx = idx
                 break
         if target is None:
             plates.append(empty.copy())
             plate_idx = len(plates) - 1
-            target = _best_spot(plates[plate_idx], rotated[i], choose)
-        (row, col), angle = target
-        mask = rotated[i][angle]
+            target = _best_spot(plates[plate_idx], prerotated[i], piece_rings, choose)
+        (row, col), angle, score = target
+        mask = prerotated[i][angle]
         plates[plate_idx][row : row + mask.shape[0], col : col + mask.shape[1]] |= mask
-        placements.append(Placement(i, plate_idx, row, col, angle))
+        placements.append(Placement(i, plate_idx, row, col, angle, score))
     return sorted(placements, key=lambda p: p.piece)
 
 
@@ -66,16 +86,27 @@ def _fits(plate, piece):
     )
 
 
-def _best_spot(occupancy, variants, choose):
-    """Best (anchor, angle) across rotations by the placement heuristic."""
-    best = None
+def _best_spot(occupancy, variants, rings, choose):
+    """Best (anchor, angle, contact) across rotations: highest contact, then
+    lowest row/col; ties beyond that keep the earliest angle."""
+    best = None  # (sort_key, anchor, angle, score)
     for angle, mask in variants.items():
         if mask.shape[0] > occupancy.shape[0] or mask.shape[1] > occupancy.shape[1]:
             continue
-        anchor = choose(legal_placement_map(occupancy, mask))
-        if anchor and (best is None or anchor < best[0]):
-            best = (anchor, angle)
-    return best
+        legal = legal_placement_map(occupancy, mask)
+        contact = (
+            contact_map(occupancy, rings[angle]) if rings is not None else np.zeros(legal.shape)
+        )
+        anchor = choose(legal, contact)
+        if anchor is None:
+            continue
+        score = float(contact[anchor])
+        key = (-score, anchor[0], anchor[1])
+        if best is None or key < best[0]:
+            best = (key, anchor, angle, score)
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
 
 
 def legal_placement_map(plate: np.ndarray, piece: np.ndarray) -> np.ndarray:
@@ -185,3 +216,6 @@ def bottom_left(legal: np.ndarray, contact: np.ndarray | None = None) -> tuple[i
         return None
     r, c = np.unravel_index(flat[0], legal.shape)
     return int(r), int(c)
+
+
+CHOOSERS = {"contact": contact_first, "bottom_left": bottom_left}
