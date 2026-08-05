@@ -12,6 +12,12 @@ This file tracks work history and ticket references.
 
 ## Log
 
+### 2026-08-05 - IMPROVE: contact-scored placement + targeted-move ILS (ADR-011)
+- **Status**: Completed (branch feat/packing-improvement, awaiting merge)
+- **Description**: Full cycle: deep-research survey (docs/research/) → spec → 6-task SDD. Contact-scoring kernel (ring + FFT contact map), scored default chooser, `pack()` prerotated/order/validate params, Falkenauer fitness, targeted/random ILS moves, `improve()` with budget+stall stops, config knobs + CLI `--budget`/`--seed` + report line. 206 tests.
+- **URL**: https://github.com/jaydee829/plate-packer
+- **Notes**: Final fable review READY TO MERGE, 0 Critical/Important; 11 minors triaged ride (see key_facts follow-ups). Two plan-literal errors caught by implementers (corner-contact arithmetic; `res` shadowing in cli.py) — both independently verified. Next: re-run the 30-piece benchmark with a budget to measure occupancy gain vs the 54-62% baseline.
+
 ### 2026-08-01 - SHAKEDOWN: first real-world pack (30 Tome of Demons pieces)
 - **Status**: Completed (branch fix/verify-oom, awaiting merge)
 - **Description**: Packed 8 Armaros parts + Decataur P1 + Tamareth P2 + Vulduk P2 + Kabeiroth P2 + Muzulk P2/P3 + Vanguard P1 (all supported, bases included). 30 pieces → 4 plates at 54–62% occupancy, all plates verify ok, mixed 45°-family rotations used. Timing on user's machine: extraction 204s (29 meshes), pack+export+verify+report 477s.

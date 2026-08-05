@@ -194,6 +194,33 @@ requires storing both mask variants and changes packer internals for no precisio
 **Consequences:** Halved dilation radii vs. the pre-ADR behavior; prepare_mask returns
 (mask, origin_mm) so export can compose exact transforms.
 
+### ADR-011: Falkenauer fitness + contact-scored placement + targeted-move ILS (2026-08-05)
+
+**Context:** Greedy bottom-left first-fit reached 54-62% occupancy on the 30-piece
+shakedown. A verified deep-research survey (docs/research/2026-08-05-packing-methods-survey.md)
+found density gains come from search layered on a fast geometry kernel, not smarter
+one-pass rules; raster/FFT was validated as competitive with vector/NFP state of the art.
+
+**Decision:** (1) Objective is Falkenauer's grouping fitness `mean(fill^2)` — THE single
+objective, no separate plate-count term (fewer plates dominates it naturally). (2) Placement
+chooser scores legal anchors by boundary contact (1px-halo ring correlated against occupancy
++ plate border via a second fftconvolve), max contact, bottom-left tie-break; default on,
+`placement = "bottom_left"` config fallback. (3) Improvement = iterated local search over
+the greedy insertion order: 70% targeted moves (reinsert from min-fill plate, swap
+lowest-contact piece), 30% random; shake after 20 fails; stops at wall-clock budget
+(`improve_budget_s`, default 2700) or stall (`patience` evals without `min_improvement`
+gain). Deterministic per `seed`. Budget 0 = plain greedy.
+
+**Alternatives:** A*/branch-and-bound -> rejected, no usable admissible bound for irregular
+nesting (area bound prunes nothing; exact methods stall at ~10-27 polygons). BRKGA
+(PAMPA-style) -> deferred, needs thousands of evaluations vs our 50-200 per 45-min budget.
+Beam-search constructor -> rejected, myopic partial fitness. Overlap-minimizing layout
+search (SOTA) -> deferred to v2+ (different architecture: penetration maps, incremental moves).
+
+**Consequences:** `pack()` gained prerotated/order/validate params (rotation cached across
+repacks); `Placement.contact` records the chosen anchor's score; contact adds a second FFT
+per placement attempt (~2x constructor cost, reclaimed by rotation caching in the loop).
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal

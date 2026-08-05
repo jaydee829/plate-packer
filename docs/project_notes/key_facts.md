@@ -37,6 +37,12 @@ This file tracks important project configuration, constants, and environment det
 - **`--copies` landmine (future)**: cli/export index `transforms[placement.piece]`, valid only while pack() emits exactly one placement per piece. Copies require per-placement transforms.
 - **Report rotation values** are true world rotation from the composed transform; nominal `Placement.angle` 90° prints as 270° (rot90/warpAffine rotate clockwise in the row-0=min-Y frame). Intentional — do not "fix".
 
+## Improvement Search (v1.1, 2026-08-05, ADR-011)
+- **Knobs** (`[packing]`): `improve_budget_s = 2700`, `min_improvement = 0.005`, `patience = 30`, `seed = 0`, `placement = "contact" | "bottom_left"`. CLI: `--budget`, `--seed` override config (no re-validation — negative `--budget` just means plain greedy). Budget 0 = plain greedy (still contact-scored).
+- **Fitness** = `mean(fill²)` over plates, fills from dilated-mask px sums / usable px. Reported in the `improvement:` report line; also echoed live per new best.
+- **Contract landmine**: `pack(validate=False)` on an unfittable piece dies with a raw `TypeError` (unpacking None), not the documented `ValueError` — callers must pre-validate (CLI Stage 2 does). Follow-up candidates (all ride, per final review): defensive raise in `pack`; skip contact FFT when `legal.any()` is False (~1.3-1.5x waste on failed probes); `rings` param on `pack()` to stop per-repack ring rebuilds (<1% cost today).
+- **rotations>1 note**: plate fills use unrotated dilated piece_px — identical bias across candidates, ranking unaffected.
+
 ## Real-World Benchmarks (2026-08-01, user's machine, defaults: 0.1mm/px, 8 rotations)
 - 30 Tome of Demons pieces (0.2M–1.7M tris each): extraction/caching 204s total; pack+export+verify+report 477s; → 4 plates at 54–62% occupancy, ~200–270MB merged STL per plate. Reference point for ADR-008 escalation decisions.
 
