@@ -5,11 +5,12 @@ total piece area fixed, concentrating area on fewer/fuller plates always
 scores higher, so plate count needs no separate objective term.
 """
 
+import time
 from dataclasses import dataclass
 
 import numpy as np
 
-from plate_packer.packer import Placement
+from plate_packer.packer import Placement, _fits, contact_first, pack, rotate_mask
 
 SHAKE_AFTER = 20
 SHAKE_MOVES = 4
@@ -131,3 +132,85 @@ def shake(order, placements, fills, rng):
         move = _RANDOM_MOVES[int(rng.integers(0, len(_RANDOM_MOVES)))]
         order = move(order, placements, fills, rng)
     return order
+
+
+def improve(
+    pieces,
+    plate_shape,
+    rotations=1,
+    plate_mask=None,
+    choose=None,
+    budget_s=2700.0,
+    min_improvement=0.005,
+    patience=30,
+    seed=0,
+    validate=True,
+    on_improve=None,
+):
+    """Iterated local search over the greedy insertion order.
+
+    Anytime: every evaluation is a complete valid packing, so both stop
+    conditions (wall-clock budget, stall: `patience` evaluations without
+    `min_improvement` cumulative fitness gain) return the best found.
+    budget_s=0 returns the plain greedy pack. Deterministic per seed.
+    on_improve(evaluations, n_plates, fitness) fires at each new best.
+    """
+    choose = choose or contact_first
+    rng = np.random.default_rng(seed)
+    angles = [i * 360.0 / rotations for i in range(rotations)]
+    prerotated = [{a: rotate_mask(p, a)[0] for a in angles} for p in pieces]
+    piece_px = [int(p.sum()) for p in pieces]
+    usable_px = plate_shape[0] * plate_shape[1] - (
+        int(plate_mask.sum()) if plate_mask is not None else 0
+    )
+    start = time.monotonic()
+
+    def evaluate(order):
+        result = pack(
+            pieces,
+            plate_shape,
+            plate_mask=plate_mask,
+            choose=choose,
+            prerotated=prerotated,
+            order=order,
+            validate=False,
+        )
+        return result, falkenauer(plate_fills(result, piece_px, usable_px))
+
+    best_order = sorted(range(len(pieces)), key=lambda i: piece_px[i], reverse=True)
+    if validate:
+        # One up-front validation; every repack then runs with validate=False.
+        empty = plate_mask.copy() if plate_mask is not None else np.zeros(plate_shape, np.uint8)
+        for i, variants in enumerate(prerotated):
+            if not any(_fits(empty, m) for m in variants.values()):
+                raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
+    best, best_fit = evaluate(best_order)
+    fitness_initial = best_fit
+    evaluations, improvements = 1, 0
+    marker, evals_since_marker, fails = best_fit, 0, 0
+    incumbent = best_order
+
+    while time.monotonic() - start < budget_s:
+        fills = plate_fills(best, piece_px, usable_px)
+        candidate = perturb(incumbent, best, fills, rng)
+        result, fit = evaluate(candidate)
+        evaluations += 1
+        evals_since_marker += 1
+        if fit > best_fit:
+            best, best_order, best_fit = result, candidate, fit
+            incumbent = candidate
+            improvements += 1
+            fails = 0
+            if on_improve is not None:
+                on_improve(evaluations, max(p.plate for p in best) + 1, best_fit)
+            if best_fit - marker >= min_improvement:
+                marker, evals_since_marker = best_fit, 0
+        else:
+            fails += 1
+            if fails >= SHAKE_AFTER:
+                incumbent = shake(best_order, best, fills, rng)
+                fails = 0
+        if evals_since_marker >= patience:
+            break
+
+    return ImproveResult(best, evaluations, improvements, fitness_initial, best_fit)

@@ -1,5 +1,7 @@
 """Tests for the improvement loop: fitness, moves, ILS (spec 2026-08-05)."""
 
+from itertools import pairwise
+
 import numpy as np
 import pytest
 
@@ -12,11 +14,12 @@ from plate_packer.improve import (
     _move_window_shuffle,
     _reinsert,
     falkenauer,
+    improve,
     perturb,
     plate_fills,
     shake,
 )
-from plate_packer.packer import Placement
+from plate_packer.packer import Placement, pack
 
 
 def solid(h, w):
@@ -136,3 +139,55 @@ def test_shake_returns_valid_permutation():
     rng = np.random.default_rng(3)
     result = shake(ORDER, _fixture_placements(), FILLS, rng)
     assert sorted(result) == ORDER
+
+
+PIECES = [solid(2, 2), solid(2, 2), solid(2, 2)]
+
+
+def test_improve_budget_zero_equals_plain_greedy():
+    res = improve(PIECES, (6, 6), budget_s=0.0)
+    assert res.placements == pack(PIECES, (6, 6))
+    assert res.evaluations == 1
+    assert res.improvements == 0
+    assert res.fitness_initial == res.fitness_final
+
+
+def test_improve_same_seed_same_result():
+    kwargs = dict(budget_s=0.5, patience=10, min_improvement=0.0, seed=7)
+    a = improve(PIECES, (6, 6), **kwargs)
+    b = improve(PIECES, (6, 6), **kwargs)
+    assert a.placements == b.placements
+    assert (a.evaluations, a.improvements) == (b.evaluations, b.improvements)
+
+
+def test_improve_stall_stop_counts_evaluations():
+    # min_improvement can never be met -> marker never resets -> exactly
+    # patience loop evaluations after the initial one.
+    res = improve(PIECES, (6, 6), budget_s=60.0, patience=3, min_improvement=10.0)
+    assert res.evaluations == 4  # 1 initial + 3 stalled
+
+
+def test_improve_budget_stop_terminates():
+    res = improve(PIECES, (6, 6), budget_s=0.2, patience=10**9, min_improvement=0.0)
+    assert res.evaluations >= 1
+
+
+def test_improve_fitness_never_worsens():
+    res = improve(PIECES, (6, 6), budget_s=0.5, patience=20, min_improvement=0.0)
+    assert res.fitness_final >= res.fitness_initial
+
+
+def test_improve_on_improve_reports_increasing_fitness():
+    seen = []
+    improve(
+        [solid(3, 3), solid(3, 3), solid(2, 2), solid(2, 2)],
+        (7, 7),
+        budget_s=1.0,
+        patience=50,
+        min_improvement=0.0,
+        seed=3,
+        on_improve=lambda evals, plates, fit: seen.append((evals, plates, fit)),
+    )
+    fits = [f for _, _, f in seen]
+    assert fits == sorted(fits)
+    assert all(f2 > f1 for f1, f2 in pairwise(fits))
