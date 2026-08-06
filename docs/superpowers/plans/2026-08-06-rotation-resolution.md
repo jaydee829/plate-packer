@@ -615,9 +615,16 @@ class ImproveResult:
 
 ```python
 def eval_coarse(order):
-    result = pack(pieces, coarse_shape, plate_mask=coarse_plate_mask, choose=choose,
-                  prerotated=coarse_prerot, order=order, validate=False,
-                  edge_weight=edge_contact_weight)
+    result = pack(
+        pieces,
+        coarse_shape,
+        plate_mask=coarse_plate_mask,
+        choose=choose,
+        prerotated=coarse_prerot,
+        order=order,
+        validate=False,
+        edge_weight=edge_contact_weight,
+    )
     return result, falkenauer(plate_fills(result, coarse_piece_px, coarse_usable))
 ```
 
@@ -626,9 +633,16 @@ def eval_coarse(order):
 
 ```python
 def fine_pack(order):
-    result = pack(pieces, plate_shape, plate_mask=plate_mask, choose=choose,
-                  prerotated=fine_prerot, order=order, validate=False,
-                  edge_weight=edge_contact_weight)
+    result = pack(
+        pieces,
+        plate_shape,
+        plate_mask=plate_mask,
+        choose=choose,
+        prerotated=fine_prerot,
+        order=order,
+        validate=False,
+        edge_weight=edge_contact_weight,
+    )
     fit = falkenauer(plate_fills(result, fine_piece_px, fine_usable))
     return result, fit
 ```
@@ -673,8 +687,7 @@ def test_improve_result_has_beam_field():
 
 def test_improve_returns_best_fine_not_best_coarse():
     # fitness_final is a FINE fitness and never below the seed's fine fitness.
-    res = improve(_WALL_PIECES, (10, 10), budget_s=0.4, patience=40,
-                  min_improvement=0.0, seed=5)
+    res = improve(_WALL_PIECES, (10, 10), budget_s=0.4, patience=40, min_improvement=0.0, seed=5)
     assert res.fitness_final >= res.fitness_initial
 
 
@@ -692,8 +705,9 @@ def test_improve_coarse_legal_orderings_pack_legally_at_fine():
 
 
 def test_improve_beam_size_bounded_by_beam_param():
-    res = improve(_WALL_PIECES, (10, 10), budget_s=0.3, patience=40,
-                  min_improvement=0.0, seed=5, beam=3)
+    res = improve(
+        _WALL_PIECES, (10, 10), budget_s=0.3, patience=40, min_improvement=0.0, seed=5, beam=3
+    )
     assert len(res.beam) <= 3
 ```
 
@@ -787,9 +801,15 @@ def test_config_reads_coarse_to_fine_knobs(tmp_path):
         ('ordering = "spiral"', "ordering"),
     ],
     ids=[
-        "coarse-below-working", "coarse-not-multiple", "beam-zero", "cap-zero",
-        "edge-frac-zero", "edge-frac-gt-one", "safety-negative",
-        "edge-weight-negative", "ordering-unknown",
+        "coarse-below-working",
+        "coarse-not-multiple",
+        "beam-zero",
+        "cap-zero",
+        "edge-frac-zero",
+        "edge-frac-gt-one",
+        "safety-negative",
+        "edge-weight-negative",
+        "ordering-unknown",
     ],
 )
 def test_config_rejects_invalid_coarse_to_fine_knobs(tmp_path, key, match):
@@ -863,10 +883,10 @@ git commit -m "feat: coarse-to-fine config knobs (ADR-012)"
 2. Add two options to `pack_command`:
 
 ```python
-    coarse_res: float = typer.Option(
-        None, "--coarse-res", help="coarse search resolution mm/px (default: config)"
-    ),
-    beam: int = typer.Option(None, "--beam", help="fine-refinement beam width (default: config)"),
+coarse_res: float = (
+    typer.Option(None, "--coarse-res", help="coarse search resolution mm/px (default: config)"),
+)
+beam: int = (typer.Option(None, "--beam", help="fine-refinement beam width (default: config)"),)
 ```
 
 3. **Stage 2 fit-check** currently uses a uniform `angles` grid. Replace the per-piece check so it uses shape-aware candidates:
