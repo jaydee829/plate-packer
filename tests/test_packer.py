@@ -121,6 +121,14 @@ def test_pack_rejects_piece_that_cannot_fit_an_empty_plate(piece_shape, rotation
         pack([solid(*piece_shape)], (4, 10), rotations=rotations)
 
 
+def test_pack_validate_false_still_raises_valueerror_on_unfittable_piece():
+    # validate=False skips the up-front fit check, but a piece that fits no
+    # plate must still fail with the documented ValueError, not a raw
+    # TypeError from unpacking a None placement.
+    with pytest.raises(ValueError, match="does not fit"):
+        pack([solid(12, 12)], (4, 10), validate=False)
+
+
 def test_obstacle_blocks_exactly_the_overlapping_anchors():
     plate = np.zeros((10, 10), np.uint8)
     plate[4, 4] = 1  # single occupied pixel

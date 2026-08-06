@@ -167,9 +167,13 @@ def test_improve_stall_stop_counts_evaluations():
     assert res.evaluations == 4  # 1 initial + 3 stalled
 
 
-def test_improve_budget_stop_terminates():
+def test_improve_budget_stop_terminates_before_any_iteration(monkeypatch):
+    # Budget already exhausted when the first while-guard is checked: the loop
+    # must not run, leaving only the initial evaluation. _FakeClock(0) fails the
+    # guard immediately. patience is unreachable so ONLY the budget can stop it.
+    monkeypatch.setattr("plate_packer.improve.time.monotonic", _FakeClock(0))
     res = improve(PIECES, (6, 6), budget_s=0.2, patience=10**9, min_improvement=0.0)
-    assert res.evaluations >= 1
+    assert res.evaluations == 1
 
 
 def test_improve_fitness_never_worsens():

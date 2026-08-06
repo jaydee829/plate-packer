@@ -71,6 +71,10 @@ def pack(
             plates.append(empty.copy())
             plate_idx = len(plates) - 1
             target = _best_spot(plates[plate_idx], prerotated[i], piece_rings, choose)
+        if target is None:
+            # Reachable only with validate=False (validate=True raises up front):
+            # honor the documented contract instead of failing on the unpack.
+            raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
         (row, col), angle, score = target
         mask = prerotated[i][angle]
         plates[plate_idx][row : row + mask.shape[0], col : col + mask.shape[1]] |= mask
