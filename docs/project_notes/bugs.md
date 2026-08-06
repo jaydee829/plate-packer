@@ -14,6 +14,12 @@ This file tracks project bugs, their root causes, solutions, and prevention stra
 
 <!-- Add new entries below in reverse-chronological order (newest first). -->
 
+### 2026-08-06 - Fractional edge_contact_weight silently truncated (uint8 pad before float cast)
+- **Issue**: `contact_map`'s `edge_weight` knob (ADR-012) silently truncated any fractional value — `edge_contact_weight=0.5` disabled border attraction entirely (→ 0), `1.7`→`1`, `>255` wrapped mod 256. Only integer weights ≤255 worked. Found by the PR #6 GitHub review.
+- **Root Cause**: `np.pad(plate, 1, constant_values=edge_weight)` runs on a `uint8` `plate`; `np.pad` preserves the input dtype, so `constant_values` is cast to uint8 BEFORE the later `.astype(np.float32)` — pure order-of-operations. Every plate/occupancy array in the codebase is uint8.
+- **Solution**: cast to float first — `np.pad(plate.astype(np.float32), 1, constant_values=edge_weight)` (commit 59ed8dc). Regression: `test_contact_map_fractional_edge_weight_not_truncated` (0 < weight-0.5 border < weight-1.0 border).
+- **Prevention**: when a float constant meets an integer array, cast the array first. Tests for a numeric knob must include a FRACTIONAL value — the existing edge_weight tests used only whole numbers (0/1/2/3), which round-trip losslessly through uint8 and hid the bug. Same lesson caught two sibling PR #6 findings: an angle-sort key that used the mirror rotation sign vs `rotate_mask` (invisible to symmetric-shape tests) and an unvalidated CLI `--coarse-res` override that could `round()` the coarse factor to 0 → raw `ZeroDivisionError`.
+
 ### 2026-08-06 - Coarse-to-fine search crashed on a fine-fitting piece with edge_margin_mm > 0
 - **Issue**: With `edge_margin_mm > 0`, `improve()` could raise an uncaught, MISLEADING `ValueError("piece i does not fit an empty plate at any rotation")` for a piece that provably fits the fine plate — a hard crash, violating ADR-004 ("doesn't fit is provable, not an artifact"). Found by the ADR-012 final whole-branch review; default config (`edge_margin_mm=0.0`) is immune.
 - **Root Cause**: Validation (CLI fit-check + improve's up-front check) runs at FINE resolution, but the coarse ILS packs against block-max-downsampled masks. Block-max grows BOTH the piece and the plate's margin frame, so a near-plate-spanning piece that fits the fine empty plate can fail to seat the coarse empty plate; `pack()` then hits its `target is None` contract-raise even under `validate=False`, and it propagates out of the coarse search.
