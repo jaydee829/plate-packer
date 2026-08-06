@@ -6,12 +6,13 @@ scores higher, so plate count needs no separate objective term.
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
+from plate_packer.angles import angle_candidates
 from plate_packer.loading import conservative_downsample
-from plate_packer.packer import Placement, _fits, contact_first, pack, rotate_mask
+from plate_packer.packer import Placement, _fits, contact_first, pack, rotate_mask, seed_order
 
 SHAKE_AFTER = 20
 SHAKE_MOVES = 4
@@ -22,10 +23,11 @@ WINDOW = 3
 @dataclass(frozen=True)
 class ImproveResult:
     placements: list[Placement]
-    evaluations: int
+    evaluations: int  # coarse evaluations (the search effort)
     improvements: int
-    fitness_initial: float
-    fitness_final: float
+    fitness_initial: float  # fine fitness of the difficulty-seed order
+    fitness_final: float  # best fine fitness among {seed} U beam
+    beam: list = field(default_factory=list)  # (coarse_fit, fine_fit, n_plates) per survivor
 
 
 def plate_fills(placements, piece_px, usable_px) -> list[float]:
@@ -162,74 +164,110 @@ def shake(order, placements, fills, rng):
 def improve(
     pieces,
     plate_shape,
-    rotations=1,
     plate_mask=None,
     choose=None,
     budget_s=2700.0,
     min_improvement=0.005,
     patience=30,
     seed=0,
+    working_res_mm=0.1,
+    coarse_res_mm=0.4,
+    beam=5,
+    angle_cap=12,
+    min_edge_frac=0.1,
+    safety_grid=0,
+    edge_contact_weight=1.0,
+    ordering="difficulty",
     validate=True,
     on_improve=None,
 ):
-    """Iterated local search over the greedy insertion order.
+    """Coarse-to-fine iterated local search over the greedy insertion order
+    (ADR-012).
 
-    Anytime: every evaluation is a complete valid packing, so both stop
+    The ILS loop searches at a coarse (downsampled) raster resolution, which
+    is cheap enough to explore many orderings; the best `beam` orderings found
+    (plus the difficulty-seed baseline) are then repacked once each at full
+    (fine) resolution, and the best-fitness fine pack is returned. Because
+    coarse masks are conservative supersets of the fine masks (block-max
+    downsample), a coarse-legal pack is always fine-legal, so every fine
+    repack succeeds.
+
+    Anytime: every coarse evaluation is a complete valid packing, so both stop
     conditions (wall-clock budget, stall: `patience` evaluations without
-    `min_improvement` cumulative fitness gain) return the best found.
-    budget_s=0 returns the plain greedy pack.
+    `min_improvement` cumulative coarse-fitness gain) return the best found.
+    budget_s=0 returns the fine pack of the difficulty-seed order (no search).
 
     Determinism: the search is deterministic per seed *for a fixed number of
-    evaluations* -- each evaluation consumes the shared RNG, so identical draw
-    sequences require identical evaluation counts. The stall stop is itself
-    deterministic (it fires at a fixed evaluation count for given inputs), but
-    the wall-clock budget is NOT: how many evaluations fit in `budget_s`
-    depends on machine speed and load, so a budget-bounded run can yield a
-    different layout for the same seed on different hardware. For a fully
-    reproducible run set `budget_s` high enough that the stall condition
-    always fires first (see key_facts.md).
+    coarse evaluations* -- each evaluation consumes the shared RNG, so
+    identical draw sequences require identical evaluation counts. The stall
+    stop is itself deterministic (it fires at a fixed evaluation count for
+    given inputs), but the wall-clock budget is NOT: how many evaluations fit
+    in `budget_s` depends on machine speed and load, so a budget-bounded run
+    can yield a different layout for the same seed on different hardware. For
+    a fully reproducible run set `budget_s` high enough that the stall
+    condition always fires first (see key_facts.md).
 
-    on_improve(evaluations, n_plates, fitness) fires at each new best.
+    fitness_final is always >= fitness_initial: the candidate set for the
+    final fine pack is {difficulty-seed order} U {beam orderings}, so the
+    anytime guarantee holds at fine resolution regardless of what the coarse
+    search finds.
+
+    on_improve(evaluations, n_plates, fitness) fires at each new coarse best
+    (coarse evaluations/fitness -- the search's internal bookkeeping).
     """
     choose = choose or contact_first
     rng = np.random.default_rng(seed)
-    angles = [i * 360.0 / rotations for i in range(rotations)]
-    prerotated = [{a: rotate_mask(p, a)[0] for a in angles} for p in pieces]
-    piece_px = [int(p.sum()) for p in pieces]
-    usable_px = plate_shape[0] * plate_shape[1] - (
-        int(plate_mask.sum()) if plate_mask is not None else 0
-    )
-    start = time.monotonic()
 
-    def evaluate(order):
+    factor = round(coarse_res_mm / working_res_mm)
+    piece_angles = [
+        angle_candidates(p, cap=angle_cap, min_edge_frac=min_edge_frac, safety_grid=safety_grid)
+        for p in pieces
+    ]
+    fine_prerot, coarse_prerot = _prerotate_multi_res(pieces, piece_angles, factor)
+
+    empty_fine = plate_mask.copy() if plate_mask is not None else np.zeros(plate_shape, np.uint8)
+    coarse_plate_mask = conservative_downsample(empty_fine, factor)
+    coarse_shape = coarse_plate_mask.shape
+
+    fine_piece_px = [int(p.sum()) for p in pieces]
+    fine_usable = plate_shape[0] * plate_shape[1] - int(empty_fine.sum())
+    coarse_piece_px = [int(next(iter(coarse_prerot[i].values())).sum()) for i in range(len(pieces))]
+    coarse_usable = coarse_shape[0] * coarse_shape[1] - int(coarse_plate_mask.sum())
+
+    if validate:
+        # One up-front validation at fine resolution; every repack then runs
+        # with validate=False (coarse-legal => fine-legal covers the rest).
+        for i, variants in enumerate(fine_prerot):
+            if not any(_fits(empty_fine, m) for m in variants.values()):
+                raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
+
+    def eval_coarse(order):
         result = pack(
             pieces,
-            plate_shape,
-            plate_mask=plate_mask,
+            coarse_shape,
+            plate_mask=coarse_plate_mask,
             choose=choose,
-            prerotated=prerotated,
+            prerotated=coarse_prerot,
             order=order,
             validate=False,
+            edge_weight=edge_contact_weight,
         )
-        return result, falkenauer(plate_fills(result, piece_px, usable_px))
+        return result, falkenauer(plate_fills(result, coarse_piece_px, coarse_usable))
 
-    best_order = sorted(range(len(pieces)), key=lambda i: piece_px[i], reverse=True)
-    if validate:
-        # One up-front validation; every repack then runs with validate=False.
-        empty = plate_mask.copy() if plate_mask is not None else np.zeros(plate_shape, np.uint8)
-        for i, variants in enumerate(prerotated):
-            if not any(_fits(empty, m) for m in variants.values()):
-                raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
-    best, best_fit = evaluate(best_order)
-    fitness_initial = best_fit
+    start = time.monotonic()
+    seed_ord = seed_order(pieces, ordering)
+
+    best_order = seed_ord
+    best, best_fit = eval_coarse(best_order)
     evaluations, improvements = 1, 0
     marker, evals_since_marker, fails = best_fit, 0, 0
     incumbent = best_order
+    beam_list = _update_beam([], best_order, best_fit, beam)
 
     while time.monotonic() - start < budget_s:
-        fills = plate_fills(best, piece_px, usable_px)
+        fills = plate_fills(best, coarse_piece_px, coarse_usable)
         candidate = perturb(incumbent, best, fills, rng)
-        result, fit = evaluate(candidate)
+        result, fit = eval_coarse(candidate)
         evaluations += 1
         evals_since_marker += 1
         if fit > best_fit:
@@ -237,6 +275,7 @@ def improve(
             incumbent = candidate
             improvements += 1
             fails = 0
+            beam_list = _update_beam(beam_list, best_order, best_fit, beam)
             if on_improve is not None:
                 on_improve(evaluations, max(p.plate for p in best) + 1, best_fit)
             if best_fit - marker >= min_improvement:
@@ -249,4 +288,36 @@ def improve(
         if evals_since_marker >= patience:
             break
 
-    return ImproveResult(best, evaluations, improvements, fitness_initial, best_fit)
+    def fine_pack(order):
+        result = pack(
+            pieces,
+            plate_shape,
+            plate_mask=plate_mask,
+            choose=choose,
+            prerotated=fine_prerot,
+            order=order,
+            validate=False,
+            edge_weight=edge_contact_weight,
+        )
+        fit = falkenauer(plate_fills(result, fine_piece_px, fine_usable))
+        return result, fit
+
+    seed_result, seed_fit = fine_pack(seed_ord)
+    fitness_initial = seed_fit
+
+    beam_fine = []
+    for coarse_fit, order in beam_list:
+        fine_result, fine_fit = fine_pack(order)
+        beam_fine.append((coarse_fit, fine_fit, fine_result))
+
+    candidates = [(None, seed_fit, seed_result), *beam_fine]
+    _, fitness_final, placements = max(candidates, key=lambda c: c[1])
+
+    beam_out = sorted(
+        ((cf, ff, max(p.plate for p in res) + 1) for cf, ff, res in beam_fine),
+        key=lambda t: -t[1],
+    )
+
+    return ImproveResult(
+        placements, evaluations, improvements, fitness_initial, fitness_final, beam_out
+    )

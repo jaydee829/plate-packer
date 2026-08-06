@@ -5,6 +5,7 @@ from itertools import pairwise
 import numpy as np
 import pytest
 
+from plate_packer.angles import angle_candidates
 from plate_packer.improve import (
     ImproveResult,
     _move_random_reinsert,
@@ -21,7 +22,7 @@ from plate_packer.improve import (
     plate_fills,
     shake,
 )
-from plate_packer.packer import Placement, pack
+from plate_packer.packer import Placement, pack, rotate_mask, seed_order
 
 
 def solid(h, w):
@@ -146,11 +147,15 @@ def test_shake_returns_valid_permutation():
 PIECES = [solid(2, 2), solid(2, 2), solid(2, 2)]
 
 
-def test_improve_budget_zero_equals_plain_greedy():
-    res = improve(PIECES, (6, 6), budget_s=0.0)
-    assert res.placements == pack(PIECES, (6, 6))
+def test_improve_budget_zero_equals_greedy_seed_pack():
+    pieces = PIECES
+    res = improve(pieces, (6, 6), budget_s=0.0)
+    angles = [angle_candidates(p) for p in pieces]
+    prerot = [{a: rotate_mask(p, a)[0] for a in ang} for p, ang in zip(pieces, angles, strict=True)]
+    order = seed_order(pieces, "difficulty")
+    expected = pack(pieces, (6, 6), prerotated=prerot, order=order, validate=False)
+    assert res.placements == expected
     assert res.evaluations == 1
-    assert res.improvements == 0
     assert res.fitness_initial == res.fitness_final
 
 
@@ -306,3 +311,36 @@ def test_prerotate_factor_one_coarse_equals_fine():
     pieces = [solid(4, 4)]
     fine, coarse = _prerotate_multi_res(pieces, [[0.0]], factor=1)
     np.testing.assert_array_equal(fine[0][0.0], coarse[0][0.0])
+
+
+def test_improve_result_has_beam_field():
+    res = improve(PIECES, (6, 6), budget_s=0.0)
+    assert isinstance(res.beam, list)
+    for _coarse_fit, _fine_fit, n_plates in res.beam:
+        assert isinstance(n_plates, int)
+
+
+def test_improve_returns_best_fine_not_best_coarse():
+    # fitness_final is a FINE fitness and never below the seed's fine fitness.
+    res = improve(_WALL_PIECES, (10, 10), budget_s=0.4, patience=40, min_improvement=0.0, seed=5)
+    assert res.fitness_final >= res.fitness_initial
+
+
+def test_improve_coarse_legal_orderings_pack_legally_at_fine():
+    # Every returned placement must be collision-free at fine resolution
+    # (coarse-legal => fine-legal).
+    pieces = [solid(3, 3), solid(2, 4), solid(4, 2), solid(2, 2)]
+    res = improve(pieces, (8, 8), budget_s=0.3, patience=30, min_improvement=0.0, seed=1)
+    occ = {}
+    for p in res.placements:
+        m, _ = rotate_mask(pieces[p.piece], p.angle)
+        plate = occ.setdefault(p.plate, np.zeros((8, 8), np.uint8))
+        plate[p.row : p.row + m.shape[0], p.col : p.col + m.shape[1]] += m
+    assert all(plate.max() <= 1 for plate in occ.values())
+
+
+def test_improve_beam_size_bounded_by_beam_param():
+    res = improve(
+        _WALL_PIECES, (10, 10), budget_s=0.3, patience=40, min_improvement=0.0, seed=5, beam=3
+    )
+    assert len(res.beam) <= 3
