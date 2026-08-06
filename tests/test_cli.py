@@ -197,3 +197,21 @@ def test_pack_improvement_summary_in_report(tmp_path, monkeypatch):
     report = (tmp_path / "plates" / "report.txt").read_text(encoding="utf-8")
     assert "improvement:" in report
     assert "evaluations" in report
+
+
+def test_pack_cli_greedy_uses_shape_aware_angles(tmp_path, monkeypatch):
+    # A budget-0 pack still succeeds end-to-end (report written, verify ok) with
+    # the shape-aware greedy path.
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src), "--budget", "0"])
+    assert result.exit_code == 0, result.output
+    report = (tmp_path / "plates" / "report.txt").read_text(encoding="utf-8")
+    assert "plate(s)" in report
+
+
+def test_pack_cli_accepts_coarse_res_and_beam_options(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app, ["pack", str(src), "--budget", "1", "--coarse-res", "0.4", "--beam", "2"]
+    )
+    assert result.exit_code == 0, result.output
