@@ -12,6 +12,7 @@ from plate_packer.packer import (
     legal_placement_map,
     pack,
     rotate_mask,
+    seed_order,
 )
 
 
@@ -329,3 +330,70 @@ def test_pack_custom_order_is_respected():
     placements = pack(pieces, (8, 8), order=[1, 0])
     by_piece = {p.piece: p for p in placements}
     assert (by_piece[1].row, by_piece[1].col) == (0, 0)
+
+
+# --- edge_weight contact scaling (Task 2, ADR-012) ---
+
+
+@pytest.mark.parametrize(
+    "edge_weight, corner, top, interior",
+    [(1.0, 5, 3, 0), (2.0, 10, 6, 0), (0.0, 0, 0, 0)],
+    ids=["ew-1", "ew-2-doubles-border", "ew-0-zeroes-border"],
+)
+def test_contact_map_edge_weight_scales_border(edge_weight, corner, top, interior):
+    plate = np.zeros((4, 4), np.uint8)
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    cmap = contact_map(plate, ring, edge_weight)
+    assert cmap[0, 0] == corner
+    assert cmap[0, 1] == top
+    assert cmap[1, 1] == interior
+
+
+@pytest.mark.parametrize("edge_weight", [1.0, 3.0], ids=["ew-1", "ew-3"])
+def test_contact_map_edge_weight_leaves_piece_contact_unchanged(edge_weight):
+    plate = np.zeros((5, 5), np.uint8)
+    plate[2, 2] = 1  # one occupied interior pixel
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    cmap = contact_map(plate, ring, edge_weight)
+    assert cmap[2, 1] == 1  # side neighbour of the occupied pixel: piece-piece only
+    assert cmap[1, 1] == 1  # diagonal neighbour: piece-piece only
+
+
+def test_contact_map_edge_weight_defaults_to_one():
+    plate = np.zeros((4, 4), np.uint8)
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    np.testing.assert_array_equal(contact_map(plate, ring), contact_map(plate, ring, 1.0))
+
+
+# --- difficulty ordering (Task 2, ADR-012) ---
+
+
+@pytest.mark.parametrize(
+    "ordering, expected",
+    [("difficulty", [1, 0]), ("area", [0, 1])],
+    ids=["difficulty-elongated-first", "area-equal-keeps-index-order"],
+)
+def test_seed_order_equal_area_bar_vs_blob(ordering, expected):
+    # bar and blob both have area 36; difficulty (area*elongation) puts the
+    # elongated bar first, area treats them as a tie broken by index.
+    pieces = [solid(6, 6), solid(2, 18)]
+    assert seed_order(pieces, ordering) == expected
+
+
+@pytest.mark.parametrize(
+    "ordering, expected",
+    [("difficulty", [1, 0]), ("area", [0, 1])],
+    ids=["difficulty-elongation-dominates", "area-bigger-blob-first"],
+)
+def test_seed_order_elongation_can_outrank_area(ordering, expected):
+    # big blob has more area (49 > 36) but the bar's elongation dominates the
+    # difficulty product.
+    pieces = [solid(7, 7), solid(2, 18)]
+    assert seed_order(pieces, ordering) == expected
+
+
+def test_seed_order_area_matches_legacy_largest_first():
+    pieces = [solid(2, 2), solid(5, 5), solid(3, 3)]
+    assert seed_order(pieces, "area") == sorted(
+        range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True
+    )
