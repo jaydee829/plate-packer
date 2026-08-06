@@ -9,6 +9,9 @@ __pycache__/
 config.toml
 footprints/
 plate_*.stl
+plates/
+*_run.log
+pack_selection.txt
 
 # Input models — pre-supported Patreon/Kickstarter STLs are copyrighted
 # third-party content and must never be committed to the public repo.

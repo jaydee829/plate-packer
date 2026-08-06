@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from plate_packer.packer import (
+    Placement,
     bottom_left,
+    contact_first,
+    contact_map,
+    contact_ring,
     legal_placement_map,
     pack,
     rotate_mask,
@@ -117,6 +121,14 @@ def test_pack_rejects_piece_that_cannot_fit_an_empty_plate(piece_shape, rotation
         pack([solid(*piece_shape)], (4, 10), rotations=rotations)
 
 
+def test_pack_validate_false_still_raises_valueerror_on_unfittable_piece():
+    # validate=False skips the up-front fit check, but a piece that fits no
+    # plate must still fail with the documented ValueError, not a raw
+    # TypeError from unpacking a None placement.
+    with pytest.raises(ValueError, match="does not fit"):
+        pack([solid(12, 12)], (4, 10), validate=False)
+
+
 def test_obstacle_blocks_exactly_the_overlapping_anchors():
     plate = np.zeros((10, 10), np.uint8)
     plate[4, 4] = 1  # single occupied pixel
@@ -170,3 +182,150 @@ def test_rotate_output_bbox_is_tight(angle):
     rotated, _ = rotate_mask(_asym_mask(), angle)
     assert rotated[0].any() and rotated[-1].any()
     assert rotated[:, 0].any() and rotated[:, -1].any()
+
+
+# --- contact scoring (Task 1) ---
+
+RING_1PX = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], np.uint8)
+RING_2X2 = np.array([[1, 1, 1, 1], [1, 0, 0, 1], [1, 0, 0, 1], [1, 1, 1, 1]], np.uint8)
+# L-shape [[1,0],[1,1]] padded to 4x4; ring = dilation minus mask.
+RING_L = np.array([[1, 1, 1, 0], [1, 0, 1, 1], [1, 0, 0, 1], [1, 1, 1, 1]], np.uint8)
+
+
+@pytest.mark.parametrize(
+    "mask, expected",
+    [
+        (np.ones((1, 1), np.uint8), RING_1PX),
+        (np.ones((2, 2), np.uint8), RING_2X2),
+        (np.array([[1, 0], [1, 1]], np.uint8), RING_L),
+    ],
+    ids=["single-pixel", "square-2x2", "L-shape"],
+)
+def test_contact_ring_known_shapes(mask, expected):
+    np.testing.assert_array_equal(contact_ring(mask), expected)
+
+
+@pytest.mark.parametrize(
+    "anchor, expected",
+    [((0, 0), 5), ((0, 1), 3), ((1, 1), 0), ((0, 3), 5), ((3, 3), 5)],
+    ids=["corner-tl", "top-edge", "interior", "corner-tr", "corner-br"],
+)
+def test_contact_map_empty_plate_border_contact(anchor, expected):
+    plate = np.zeros((4, 4), np.uint8)
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    cmap = contact_map(plate, ring)
+    assert cmap.shape == (4, 4)
+    assert cmap[anchor] == expected
+
+
+@pytest.mark.parametrize(
+    "anchor, expected",
+    [((1, 1), 1), ((2, 1), 1), ((2, 2), 0), ((0, 0), 5)],
+    ids=["diagonal-neighbour", "side-neighbour", "on-top-center-excluded", "far-corner"],
+)
+def test_contact_map_single_occupied_pixel(anchor, expected):
+    plate = np.zeros((5, 5), np.uint8)
+    plate[2, 2] = 1
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    assert contact_map(plate, ring)[anchor] == expected
+
+
+def test_contact_first_picks_max_contact():
+    legal = np.ones((2, 2), bool)
+    contact = np.array([[0.0, 1.0], [2.0, 0.0]])
+    assert contact_first(legal, contact) == (1, 0)
+
+
+def test_contact_first_tie_breaks_bottom_left():
+    legal = np.ones((2, 2), bool)
+    contact = np.array([[1.0, 0.0], [1.0, 0.0]])
+    assert contact_first(legal, contact) == (0, 0)
+
+
+def test_contact_first_ignores_illegal_high_scores():
+    legal = np.array([[False, True], [True, False]])
+    contact = np.array([[9.0, 1.0], [2.0, 0.0]])
+    assert contact_first(legal, contact) == (1, 0)
+
+
+def test_contact_first_returns_none_when_nothing_legal():
+    assert contact_first(np.zeros((3, 3), bool), np.ones((3, 3))) is None
+
+
+def test_contact_first_declares_uses_contact():
+    assert getattr(contact_first, "uses_contact", False) is True
+
+
+def test_bottom_left_ignores_contact_argument():
+    legal = np.ones((2, 2), bool)
+    contact = np.array([[0.0, 0.0], [9.0, 9.0]])
+    assert bottom_left(legal, contact) == (0, 0)
+
+
+# --- scored placement integration (Task 2) ---
+
+
+def test_placement_contact_defaults_to_zero():
+    p = Placement(0, 0, 1, 2, 90.0)
+    assert p.contact == 0.0
+
+
+def test_pack_default_choose_records_contact_scores():
+    placements = pack([solid(2, 2), solid(2, 2)], (6, 6))
+    by_piece = {p.piece: p for p in placements}
+    assert by_piece[0].contact == 7.0  # 2x2 in a corner: 7 halo px on the border frame
+    # A free corner (2 border edges = 7) always outscores a mid-edge slot
+    # adjacent to piece 0 (1 border edge + 1 neighbour = 4 + 2 = 6), so the
+    # second piece takes the next free corner, not the adjacent slot.
+    assert by_piece[1].contact == 7.0
+
+
+def test_pack_contact_places_second_piece_in_a_free_corner():
+    placements = pack([solid(2, 2), solid(2, 2)], (6, 6))
+    by_piece = {p.piece: p for p in placements}
+    assert (by_piece[0].row, by_piece[0].col) == (0, 0)
+    assert (by_piece[1].row, by_piece[1].col) == (0, 4)
+
+
+def test_pack_bottom_left_contact_is_zero():
+    placements = pack([solid(2, 2)], (6, 6), choose=bottom_left)
+    assert placements[0].contact == 0.0
+
+
+def test_pack_rotation_chosen_for_snugness():
+    # 8x8 plate; cols 0..2 occupied except a 1-wide, 4-deep slot at col 1.
+    # A 1x4 bar fits the slot only rotated (4x1); the slot's 3-sided contact
+    # (14) beats any open-area placement (8), so scoring must pick 90 deg
+    # even though 0 deg is legal elsewhere.
+    plate_mask = np.zeros((8, 8), np.uint8)
+    plate_mask[:, :3] = 1
+    plate_mask[:4, 1] = 0
+    placements = pack([solid(1, 4)], (8, 8), rotations=4, plate_mask=plate_mask)
+    p = placements[0]
+    assert p.angle == 90.0
+    assert (p.row, p.col) == (0, 1)
+    assert p.contact == 14.0
+
+
+def test_pack_prerotated_and_order_match_defaults():
+    pieces = [solid(2, 2), solid(3, 3), solid(1, 2)]
+    angles = [0.0, 90.0, 180.0, 270.0]
+    prerotated = [{a: rotate_mask(p, a)[0] for a in angles} for p in pieces]
+    order = sorted(range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True)
+    default = pack(pieces, (8, 8), rotations=4)
+    explicit = pack(pieces, (8, 8), rotations=4, prerotated=prerotated, order=order, validate=False)
+    assert default == explicit
+
+
+def test_pack_validate_true_rejects_oversized_piece():
+    with pytest.raises(ValueError, match="does not fit"):
+        pack([solid(9, 9)], (4, 4))
+
+
+def test_pack_custom_order_is_respected():
+    # Two pieces, reversed order: the SMALL piece is placed first and takes
+    # the (0, 0) corner.
+    pieces = [solid(3, 3), solid(2, 2)]
+    placements = pack(pieces, (8, 8), order=[1, 0])
+    by_piece = {p.piece: p for p in placements}
+    assert (by_piece[1].row, by_piece[1].col) == (0, 0)

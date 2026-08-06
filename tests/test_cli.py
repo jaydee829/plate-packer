@@ -179,3 +179,21 @@ def test_pack_spillover_to_second_plate(tmp_path, monkeypatch):
     result = runner.invoke(app, ["pack", str(src)])
     assert result.exit_code == 0, result.output
     assert (tmp_path / "plates" / "plate_02.stl").exists()
+
+
+def test_pack_budget_zero_is_plain_greedy(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src), "--budget", "0"])
+    assert result.exit_code == 0
+    assert "improve:" not in result.output
+    assert "improvement:" not in result.output
+
+
+def test_pack_improvement_summary_in_report(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src), "--budget", "5", "--seed", "1"])
+    assert result.exit_code == 0
+    assert "improvement:" in result.output
+    report = (tmp_path / "plates" / "report.txt").read_text(encoding="utf-8")
+    assert "improvement:" in report
+    assert "evaluations" in report

@@ -37,6 +37,13 @@ This file tracks important project configuration, constants, and environment det
 - **`--copies` landmine (future)**: cli/export index `transforms[placement.piece]`, valid only while pack() emits exactly one placement per piece. Copies require per-placement transforms.
 - **Report rotation values** are true world rotation from the composed transform; nominal `Placement.angle` 90° prints as 270° (rot90/warpAffine rotate clockwise in the row-0=min-Y frame). Intentional — do not "fix".
 
+## Improvement Search (v1.1, 2026-08-05, ADR-011)
+- **Knobs** (`[packing]`): `improve_budget_s = 2700`, `min_improvement = 0.005`, `patience = 30`, `seed = 0`, `placement = "contact" | "bottom_left"`. CLI: `--budget`, `--seed` override config (no re-validation — negative `--budget` just means plain greedy). Budget 0 = plain greedy (still contact-scored).
+- **Fitness** = `mean(fill²)` over plates, fills from dilated-mask px sums / usable px. Reported in the `improvement:` report line; also echoed live per new best.
+- **Determinism / reproducible runs**: deterministic per `seed` only for a fixed evaluation count. The stall stop is deterministic; the wall-clock budget is NOT (how many evals fit in `improve_budget_s` depends on machine speed). At the default 2700s budget, realistic piece counts hit the timer, not the stall, so the same seed can give different layouts on different hardware. **For a reproducible run (e.g. before/after benchmarking), set `improve_budget_s` high** so the `patience` stall determines the stop. (PR #5 review finding, 2026-08-06.)
+- `pack(validate=False)` on an unfittable piece raises the documented `ValueError` (guarded against the `None`-unpack; PR #5 review). Remaining perf follow-ups (ride): skip the contact FFT when `legal.any()` is False (~1.3-1.5x waste on failed probes); add a `rings` param to `pack()` to stop per-repack ring rebuilds (<1% cost today).
+- **rotations>1 note**: plate fills use unrotated dilated piece_px — identical bias across candidates, ranking unaffected.
+
 ## Real-World Benchmarks (2026-08-01, user's machine, defaults: 0.1mm/px, 8 rotations)
 - 30 Tome of Demons pieces (0.2M–1.7M tris each): extraction/caching 204s total; pack+export+verify+report 477s; → 4 plates at 54–62% occupancy, ~200–270MB merged STL per plate. Reference point for ADR-008 escalation decisions.
 

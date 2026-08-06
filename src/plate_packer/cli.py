@@ -23,8 +23,9 @@ from plate_packer.footprint_io import (
     load_doc,
     save_doc,
 )
+from plate_packer.improve import improve
 from plate_packer.loading import prepare_mask
-from plate_packer.packer import legal_placement_map, pack, rotate_mask
+from plate_packer.packer import CHOOSERS, _fits, pack, rotate_mask
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -90,6 +91,12 @@ def pack_command(
     footprints_dir: Path = typer.Option(None, help="cache dir (default: config)"),  # noqa: B008
     no_verify: bool = typer.Option(False, "--no-verify", help="skip merged-shadow self-check"),
     force: bool = typer.Option(False, help="regenerate footprint docs even if current"),
+    budget: float = typer.Option(
+        None,
+        "--budget",
+        help="improvement budget in seconds (0 = plain greedy; default: config)",
+    ),
+    seed: int = typer.Option(None, help="improvement search RNG seed (default: config)"),
 ):
     """Pack STL/OBJ files onto build plates and export one merged STL per plate."""
     cfg = load_config(config)
@@ -132,12 +139,9 @@ def pack_command(
                 )
                 continue
             mask, origin = prepare_mask(doc, cfg.spacing_mm, res)
-            fits = any(
-                rm.shape[0] <= plate_shape[0]
-                and rm.shape[1] <= plate_shape[1]
-                and legal_placement_map(plate_mask, rm).any()
-                for rm in (rotate_mask(mask, a)[0] for a in angles)
-            )
+            # Same predicate pack()/improve() would run with validate=True; call
+            # it directly so the two never drift (both later run validate=False).
+            fits = any(_fits(plate_mask, rotate_mask(mask, a)[0]) for a in angles)
             if not fits:
                 errors.append((f, "does not fit an empty plate at any rotation"))
                 continue
@@ -154,8 +158,43 @@ def pack_command(
             typer.echo(f"  {f.name}: {msg}")
         raise typer.Exit(code=1)
 
-    # Stage 3: pack (placements come back sorted by piece index).
-    placements = pack(masks, plate_shape, rotations=cfg.rotations, plate_mask=plate_mask)
+    # Stage 3: pack (placements come back sorted by piece index). budget > 0
+    # wraps greedy in the improvement search; per-piece validation already ran.
+    choose = CHOOSERS[cfg.placement]
+    budget_s = cfg.improve_budget_s if budget is None else budget
+    seed_val = cfg.seed if seed is None else seed
+    improve_line = None
+    if budget_s > 0:
+        res_improve = improve(
+            masks,
+            plate_shape,
+            rotations=cfg.rotations,
+            plate_mask=plate_mask,
+            choose=choose,
+            budget_s=budget_s,
+            min_improvement=cfg.min_improvement,
+            patience=cfg.patience,
+            seed=seed_val,
+            validate=False,
+            on_improve=lambda evals, plates, fit: typer.echo(
+                f"  improve: eval {evals}: {plates} plate(s), fitness {fit:.4f}"
+            ),
+        )
+        placements = res_improve.placements
+        improve_line = (
+            f"improvement: {res_improve.evaluations} evaluations, "
+            f"{res_improve.improvements} improvements, "
+            f"fitness {res_improve.fitness_initial:.4f} -> {res_improve.fitness_final:.4f}"
+        )
+    else:
+        placements = pack(
+            masks,
+            plate_shape,
+            rotations=cfg.rotations,
+            plate_mask=plate_mask,
+            choose=choose,
+            validate=False,
+        )
 
     # Stage 4: exact transforms + export.
     transforms = []
@@ -186,6 +225,8 @@ def pack_command(
                 f"  {piece_files[pl.piece].name}  x={cx:+.1f}mm  y={cy:+.1f}mm  rot={rot:.1f}deg"
             )
     lines.append(f"{len(piece_files)} pieces -> {len(plate_files)} plate(s)")
+    if improve_line:
+        lines.append(improve_line)
     report = "\n".join(lines)
     (Path(out_dir) / "report.txt").write_text(report + "\n", encoding="utf-8")
 
