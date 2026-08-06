@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from plate_packer.loading import conservative_downsample
 from plate_packer.packer import Placement, _fits, contact_first, pack, rotate_mask
 
 SHAKE_AFTER = 20
@@ -40,6 +41,19 @@ def plate_fills(placements, piece_px, usable_px) -> list[float]:
 def falkenauer(fills) -> float:
     """Mean squared fill -- maximize."""
     return float(sum(f * f for f in fills) / len(fills))
+
+
+def _prerotate_multi_res(pieces, piece_angles, factor):
+    """Per-piece {angle: mask} at fine resolution and at a block-max-downsampled
+    coarse resolution. Coarse masks are supersets of fine (coarse-legal =>
+    fine-legal)."""
+    fine, coarse = [], []
+    for piece, angles in zip(pieces, piece_angles, strict=True):
+        fvar = {a: rotate_mask(piece, a)[0] for a in angles}
+        cvar = {a: conservative_downsample(m, factor) for a, m in fvar.items()}
+        fine.append(fvar)
+        coarse.append(cvar)
+    return fine, coarse
 
 
 def _update_beam(beam, order, fitness, k):

@@ -12,6 +12,7 @@ from plate_packer.improve import (
     _move_targeted_reinsert,
     _move_targeted_swap,
     _move_window_shuffle,
+    _prerotate_multi_res,
     _reinsert,
     _update_beam,
     falkenauer,
@@ -279,3 +280,29 @@ def test_update_beam_does_not_mutate_input():
     original = [(0.5, [2, 1, 0])]
     _update_beam(original, [0, 1, 2], 0.9, k=5)
     assert original == [(0.5, [2, 1, 0])]
+
+
+def test_prerotate_multi_res_keys_match_angles_at_both_resolutions():
+    pieces = [solid(3, 5)]
+    fine, coarse = _prerotate_multi_res(pieces, [[0.0, 90.0]], factor=2)
+    assert set(fine[0]) == {0.0, 90.0}
+    assert set(coarse[0]) == {0.0, 90.0}
+
+
+@pytest.mark.parametrize("angle", [0.0, 90.0, 30.0], ids=["0deg", "90deg", "30deg"])
+def test_prerotate_coarse_is_superset_of_fine(angle):
+    # Every ON pixel of the fine rotated mask must fall in an ON coarse cell
+    # (block-max grows-never-shrinks) -> coarse-legal implies fine-legal.
+    piece = np.zeros((6, 10), np.uint8)
+    piece[1:5, 2:8] = 1
+    factor = 3
+    fine, coarse = _prerotate_multi_res([piece], [[angle]], factor)
+    fm, cm = fine[0][angle], coarse[0][angle]
+    fr, fc = np.nonzero(fm)
+    assert cm[fr // factor, fc // factor].all()
+
+
+def test_prerotate_factor_one_coarse_equals_fine():
+    pieces = [solid(4, 4)]
+    fine, coarse = _prerotate_multi_res(pieces, [[0.0]], factor=1)
+    np.testing.assert_array_equal(fine[0][0.0], coarse[0][0.0])
