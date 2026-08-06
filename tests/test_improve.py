@@ -344,3 +344,20 @@ def test_improve_beam_size_bounded_by_beam_param():
         _WALL_PIECES, (10, 10), budget_s=0.3, patience=40, min_improvement=0.0, seed=5, beam=3
     )
     assert len(res.beam) <= 3
+
+
+def test_improve_survives_coarse_growth_of_margin_frame():
+    # A near-plate-spanning piece fits the FINE empty plate but its block-max
+    # coarse variant cannot seat the coarse (margin-grown) plate. improve()
+    # must fall back to fine resolution instead of raising a misleading
+    # "does not fit" (ADR-004).
+    plate_shape = (40, 40)
+    margin = np.zeros(plate_shape, np.uint8)
+    margin[:3, :] = 1
+    margin[-3:, :] = 1
+    margin[:, :3] = 1
+    margin[:, -3:] = 1
+    piece = np.ones((34, 4), np.uint8)  # fits the 34x34 fine usable band
+    res = improve([piece], plate_shape, plate_mask=margin, budget_s=0.0)
+    assert len(res.placements) == 1
+    assert res.placements[0].plate == 0

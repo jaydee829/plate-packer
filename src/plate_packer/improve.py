@@ -234,6 +234,22 @@ def improve(
     coarse_piece_px = [int(next(iter(coarse_prerot[i].values())).sum()) for i in range(len(pieces))]
     coarse_usable = coarse_shape[0] * coarse_shape[1] - int(coarse_plate_mask.sum())
 
+    # A piece that fits the fine empty plate can fail the block-max-grown
+    # coarse plate (both the piece and the margin frame grow). Rather than
+    # raise a misleading "does not fit" (ADR-004) or crash mid-search, fall
+    # back to fine resolution for the coarse phase -- still correct, just
+    # without the coarse-search speedup. Immune to this on the default
+    # edge_margin_mm=0.0 path (all-zero coarse plate seats every piece).
+    coarse_seats_all = all(
+        any(_fits(coarse_plate_mask, m) for m in variants.values()) for variants in coarse_prerot
+    )
+    if not coarse_seats_all:
+        coarse_prerot = fine_prerot
+        coarse_plate_mask = empty_fine
+        coarse_shape = plate_shape
+        coarse_piece_px = fine_piece_px
+        coarse_usable = fine_usable
+
     if validate:
         # One up-front validation at fine resolution; every repack then runs
         # with validate=False (coarse-legal => fine-legal covers the rest).
