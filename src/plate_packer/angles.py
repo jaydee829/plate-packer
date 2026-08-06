@@ -56,4 +56,9 @@ def angle_candidates(
         if not deduped or abs(a - deduped[-1]) > _DEDUP_DEG:
             deduped.append(a)
     deduped.sort(key=lambda a: (_analytic_aabb_area(hull, a), a))
-    return deduped[:cap]
+    result = deduped[:cap]
+    if 0.0 not in result:
+        # 0.0 (the lossless un-rotated path) must always remain available;
+        # drop the least-compact candidate to make room within the cap.
+        result = [*deduped[: cap - 1], 0.0]
+    return result

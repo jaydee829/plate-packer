@@ -24,6 +24,14 @@ def _l_shape():
     return m
 
 
+def _tilted_rect():
+    base = np.ones((3, 12), np.uint8)
+    m = cv2.getRotationMatrix2D((6, 1.5), 30, 1.0)
+    m[0, 2] += 30 / 2 - 6
+    m[1, 2] += 30 / 2 - 1.5
+    return (cv2.warpAffine(base.astype(np.float32), m, (30, 30)) > 0).astype(np.uint8)
+
+
 @pytest.mark.parametrize(
     "mask, expected",
     [
@@ -73,11 +81,7 @@ def test_angle_candidates_safety_grid_applies_to_circle():
 def test_angle_candidates_sorted_by_compactness_deskews_tilt():
     # A rectangle rasterized at +30deg: the top candidate must de-skew it to a
     # tighter analytic bbox than leaving it at 0deg.
-    base = solid(3, 12)
-    m = cv2.getRotationMatrix2D((6, 1.5), 30, 1.0)
-    m[0, 2] += 30 / 2 - 6
-    m[1, 2] += 30 / 2 - 1.5
-    tilted = (cv2.warpAffine(base.astype(np.float32), m, (30, 30)) > 0).astype(np.uint8)
+    tilted = _tilted_rect()
 
     def analytic_aabb(mask, angle):
         pts = cv2.convexHull(np.argwhere(mask > 0)[:, ::-1].astype(np.int32))[:, 0, :].astype(float)
@@ -87,3 +91,16 @@ def test_angle_candidates_sorted_by_compactness_deskews_tilt():
 
     cands = angle_candidates(tilted)
     assert analytic_aabb(tilted, cands[0]) < analytic_aabb(tilted, 0.0)
+
+
+@pytest.mark.parametrize("cap", [1, 2, 3], ids=["cap-1", "cap-2", "cap-3"])
+def test_angle_candidates_keeps_zero_under_small_cap(cap):
+    # 0.0 (the lossless un-rotated path) must survive cap truncation even when
+    # it is not among the most compact orientations of a tilted piece.
+    result = angle_candidates(_tilted_rect(), cap=cap)
+    assert 0.0 in result
+    assert len(result) == cap
+
+
+def test_angle_candidates_cap_one_tilted_is_zero():
+    assert angle_candidates(_tilted_rect(), cap=1) == [0.0]
