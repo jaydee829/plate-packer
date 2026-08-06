@@ -14,6 +14,12 @@ This file tracks project bugs, their root causes, solutions, and prevention stra
 
 <!-- Add new entries below in reverse-chronological order (newest first). -->
 
+### 2026-08-06 - Coarse-to-fine search crashed on a fine-fitting piece with edge_margin_mm > 0
+- **Issue**: With `edge_margin_mm > 0`, `improve()` could raise an uncaught, MISLEADING `ValueError("piece i does not fit an empty plate at any rotation")` for a piece that provably fits the fine plate — a hard crash, violating ADR-004 ("doesn't fit is provable, not an artifact"). Found by the ADR-012 final whole-branch review; default config (`edge_margin_mm=0.0`) is immune.
+- **Root Cause**: Validation (CLI fit-check + improve's up-front check) runs at FINE resolution, but the coarse ILS packs against block-max-downsampled masks. Block-max grows BOTH the piece and the plate's margin frame, so a near-plate-spanning piece that fits the fine empty plate can fail to seat the coarse empty plate; `pack()` then hits its `target is None` contract-raise even under `validate=False`, and it propagates out of the coarse search.
+- **Solution**: In `improve()`, after building coarse artifacts, check `all(any(_fits(coarse_plate_mask, m) for m in variants.values()) for variants in coarse_prerot)`; if any piece can't seat the coarse empty plate, fall back to fine resolution for the coarse phase (reassign the five `coarse_*` names to their fine equivalents). No crash, correct result, only the coarse speedup is lost for that run. No-op on the all-zero default coarse plate (commit c5554c2). Regression: `test_improve_survives_coarse_growth_of_margin_frame`.
+- **Prevention**: Any lossy/conservative coarsening that grows masks can make a fine-legal piece coarse-illegal — validate at the SAME resolution you pack at, or degrade gracefully; never let a resolution artifact surface as a "doesn't fit" (ADR-004). When two code paths use different resolutions, test the seam with a piece sized to the boundary.
+
 ### 2026-08-01 - MemoryError in verify stage on first real-world pack
 - **Issue**: `pack` of 30 Tome of Demons pieces crashed with `MemoryError: Unable to allocate 382 MiB` while verifying plate_01.stl (16.7M vertices, 266MB file); plates were written but report/verify never ran.
 - **Root Cause**: verify reloaded merged plates via `trimesh.load_mesh`, which builds a Scene then deep-copies the mesh in `to_mesh()` (~3-4x the mesh in RAM), on top of all pack-stage arrays still alive in the process.
