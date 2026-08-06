@@ -224,6 +224,35 @@ search (SOTA) -> deferred to v2+ (different architecture: penetration maps, incr
 repacks); `Placement.contact` records the chosen anchor's score; contact adds a second FFT
 per placement attempt (~2x constructor cost, reclaimed by rotation caching in the loop).
 
+### ADR-012: Shape-aware angles + coarse-to-fine beam search (2026-08-06)
+
+**Context:** Benchmark on the 30-piece set (see key_facts "Real-World
+Benchmarks") showed contact-scored greedy regressed to 5 plates at 8 rotations
+but recovered to 4 plates (beating bottom-left greedy) at 16 rotations — the
+regression was a 45°-granularity artifact (irregular hull edges rarely lie
+parallel to anything). But each repack costs ~105-196s, so a uniform fine
+rotation grid starves the ILS search. Keeps contact as default (revises the
+post-ADR-011 "flip to bottom-left" idea — with enough rotations contact wins).
+
+**Decision:** (1) **Shape-aware angle candidates** (`angles.py`): lay convex-hull
+edges parallel to plate axes, capped, circle-like → 1 angle; a uniform
+safety-grid union is available but off by default. (2) **Coarse-to-fine beam
+search**: run the ILS at a coarse resolution (0.4mm, ~16x cheaper evals),
+keep the top-K orderings, fine-pack only those at 0.1mm, return the best fine
+result. Coarse-legal ⇒ fine-legal (block-max downsample grows masks, so coarse
+masks are supersets). (3) **Difficulty-first ordering** seed (area × elongation)
+replaces largest-area-first. Fixed beam-K now; adaptive successive-halving
+deferred until coarse↔fine correlation data justifies it.
+
+**Alternatives:** uniform fine grid (no shape-awareness) → wasteful, starves
+search. Adaptive/hierarchical beam from the start → YAGNI, K is small so batch
+fine-refine is cheap; build after fixed-beam yields correlation data. Cluster
+nesting, delta-evaluation → deferred.
+
+**Consequences:** `improve()` restructured (coarse/fine masks, beam);
+`contact_map` gains `edge_weight` (plate-edge vs piece-piece contact weight,
+default 1.0 = equal). Spec: docs/superpowers/specs/2026-08-06-rotation-resolution-design.md.
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal

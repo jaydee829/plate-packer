@@ -12,6 +12,12 @@ This file tracks work history and ticket references.
 
 ## Log
 
+### 2026-08-06 - BENCH+ROT: benchmark findings + rotation/resolution milestone spec'd
+- **Status**: Spec complete (branch feat/rotation-resolution), plan+SDD next
+- **Description**: Benchmarked ADR-011 on the 30-piece set (no STL export, direct improve() probes). Found: (a) contact-scored greedy REGRESSED to 5 plates vs bottom-left's 4 at 8 rotations; (b) at 16 rotations contact greedy recovers to 4 plates / fitness 0.4785, beating bottom-left (0.4765); (c) each repack costs ~105-196s so the ILS is starved (5 evals → 0 improvements). Concluded: raise rotations but make them affordable (coarse-res search) and targeted (shape-aware angles). Spec: ADR-012 / docs/superpowers/specs/2026-08-06-rotation-resolution-design.md.
+- **URL**: https://github.com/jaydee829/plate-packer
+- **Notes**: The 60-min background pack could not run — this machine kills detached heavy compute (confirmed; see [[background-heavy-compute-killed]] memory). Ran foreground probes ≤10min instead. plates/ (original 4-plate greedy output) preserved for eyeball. Full-length runs must go via the user's own terminal (`!` prefix).
+
 ### 2026-08-05 - IMPROVE: contact-scored placement + targeted-move ILS (ADR-011)
 - **Status**: Completed (branch feat/packing-improvement, awaiting merge)
 - **Description**: Full cycle: deep-research survey (docs/research/) → spec → 6-task SDD. Contact-scoring kernel (ring + FFT contact map), scored default chooser, `pack()` prerotated/order/validate params, Falkenauer fitness, targeted/random ILS moves, `improve()` with budget+stall stops, config knobs + CLI `--budget`/`--seed` + report line. 206 tests.

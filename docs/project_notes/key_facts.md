@@ -44,8 +44,14 @@ This file tracks important project configuration, constants, and environment det
 - `pack(validate=False)` on an unfittable piece raises the documented `ValueError` (guarded against the `None`-unpack; PR #5 review). Remaining perf follow-ups (ride): skip the contact FFT when `legal.any()` is False (~1.3-1.5x waste on failed probes); add a `rings` param to `pack()` to stop per-repack ring rebuilds (<1% cost today).
 - **rotations>1 note**: plate fills use unrotated dilated piece_px — identical bias across candidates, ranking unaffected.
 
-## Real-World Benchmarks (2026-08-01, user's machine, defaults: 0.1mm/px, 8 rotations)
-- 30 Tome of Demons pieces (0.2M–1.7M tris each): extraction/caching 204s total; pack+export+verify+report 477s; → 4 plates at 54–62% occupancy, ~200–270MB merged STL per plate. Reference point for ADR-008 escalation decisions.
+## Real-World Benchmarks (user's machine, 30 Tome of Demons pieces)
+- **2026-08-01** (0.1mm/px, 8 rot): extraction/caching 204s; pack+export+verify+report 477s; → 4 plates at 54–62% occupancy, ~200–270MB merged STL per plate.
+- **2026-08-06** greedy comparison (budget 0, 0.1mm/px), single repack cost + result:
+  - bottom-left, 8 rot: **4 plates**, fitness 0.4765, ~105s/eval, occ [62.3, 60.9, 53.8, 56.3%]
+  - contact, 8 rot: **5 plates**, fitness 0.3685, ~196s/eval, occ [64.9, 60.4, 54.2, 49.4, 4.4%] — contact REGRESSED at 8 rot
+  - contact, 16 rot: **4 plates**, fitness 0.4785, mean contact 77px, ~381s/eval — recovers, beats bottom-left
+- **Search is eval-cost-bound**: ILS at ~105-196s/eval → 60-min budget ≈ 19-34 evals; 5 bottom-left evals gave 0 improvements. Per-eval cost, not budget, is the bottleneck → motivates coarse-to-fine (ADR-012).
+- **Ops**: this machine kills detached heavy compute (background pack killed mid-run). Foreground probes must be ≤10min (600s Bash cap); full-length runs go through the user's terminal via `!`. See [[background-heavy-compute-killed]].
 
 ## Domain Constants & Conventions
 - **Raster resolution**: ~0.05–0.1 mm/px, config knob; tune empirically (0.1 mm/px on a ~200×130 mm plate → ~2000×1300 masks).
