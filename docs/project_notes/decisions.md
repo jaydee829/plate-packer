@@ -209,7 +209,10 @@ chooser scores legal anchors by boundary contact (1px-halo ring correlated again
 the greedy insertion order: 70% targeted moves (reinsert from min-fill plate, swap
 lowest-contact piece), 30% random; shake after 20 fails; stops at wall-clock budget
 (`improve_budget_s`, default 2700) or stall (`patience` evals without `min_improvement`
-gain). Deterministic per `seed`. Budget 0 = plain greedy.
+gain). Budget 0 = plain greedy. Deterministic per `seed` **for a fixed evaluation count**:
+the stall stop is deterministic, but the wall-clock budget is not (eval count depends on
+machine speed), so a budget-bounded run can differ across hardware for the same seed. For a
+reproducible run, set `improve_budget_s` high enough that the stall always fires first.
 
 **Alternatives:** A*/branch-and-bound -> rejected, no usable admissible bound for irregular
 nesting (area bound prunes nothing; exact methods stall at ~10-27 polygons). BRKGA

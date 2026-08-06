@@ -1,0 +1,39 @@
+  verify plate_01.stl: ok
+  verify plate_02.stl: ok
+  verify plate_03.stl: ok
+  verify plate_04.stl: ok
+plate_01.stl: 6 pieces, 62.3% occupied
+  STL_Armaros_LeftWing_supported.stl  x=+75.9mm  y=-25.5mm  rot=270.0deg
+  STL_Armaros_Sword_Supported.stl  x=-88.7mm  y=-40.4mm  rot=270.0deg
+  STL_Base_Pose_1_Supported.stl  x=+52.0mm  y=+31.7mm  rot=225.0deg
+  STL_Pose_1_Body_Supported.stl  x=-9.7mm  y=+32.4mm  rot=45.0deg
+  STL_Pose2_Body_Supported.stl  x=+12.2mm  y=-22.1mm  rot=225.0deg
+  STL_Body_pose02_supported.stl  x=-62.2mm  y=+1.2mm  rot=0.0deg
+plate_02.stl: 6 pieces, 60.9% occupied
+  STL_Armaros_Base_Supported.stl  x=+67.2mm  y=+9.4mm  rot=90.0deg
+  STL_Armaros_RightWing_supported.stl  x=-39.5mm  y=+27.3mm  rot=135.0deg
+  STL_Pose_1_Wing_R_Supported.stl  x=+70.9mm  y=-46.5mm  rot=270.0deg
+  STL_Pose2_Base_Supported.stl  x=+17.8mm  y=-25.8mm  rot=315.0deg
+  STL_Fly_pose_3_base_Supported.stl  x=+14.9mm  y=+35.3mm  rot=315.0deg
+  STL_Vanguard_Pose1_supported.stl  x=-61.5mm  y=-26.5mm  rot=0.0deg
+plate_03.stl: 7 pieces, 53.8% occupied
+  STL_Armaros_Body_Wings_Supported.stl  x=-8.2mm  y=-19.7mm  rot=315.0deg
+  STL_Armaros_Tail_Supported.stl  x=+58.0mm  y=+21.8mm  rot=180.0deg
+  STL_Pose02-wing01_Supported.stl  x=+80.5mm  y=-36.5mm  rot=0.0deg
+  STL_Base_pose02.stl  x=-62.4mm  y=-33.3mm  rot=0.0deg
+  STL_Fly_pose_2_body_Supported.stl  x=-54.2mm  y=+26.3mm  rot=315.0deg
+  STL_Fly_pose_3_body_merged_rock_Supported.stl  x=+45.3mm  y=-30.7mm  rot=0.0deg
+  STL_Vanguard_Pose1_Base_supported.stl  x=-1.1mm  y=+31.5mm  rot=225.0deg
+plate_04.stl: 11 pieces, 56.3% occupied
+  STL_Armaros_Head_Supported.stl  x=+4.8mm  y=+24.5mm  rot=135.0deg
+  STL_Armaros_Whip_Supported.stl  x=-87.1mm  y=+19.0mm  rot=180.0deg
+  STL_Pose_1_Wing_L_Supported.stl  x=-49.6mm  y=+1.1mm  rot=45.0deg
+  STL_Pose02-base_Supported.stl  x=-69.5mm  y=-35.4mm  rot=0.0deg
+  STL_pose02-body_Supported.stl  x=-14.9mm  y=-33.6mm  rot=180.0deg
+  STL_Pose02-head_Supported.stl  x=+72.2mm  y=-11.0mm  rot=180.0deg
+  STL_Pose02-Wing02_Supported.stl  x=+85.7mm  y=+30.6mm  rot=225.0deg
+  STL_Pose2_Wing_L_Supported.stl  x=+42.9mm  y=+29.8mm  rot=45.0deg
+  STL_Pose2_Wing_R_Supported.stl  x=-25.0mm  y=+15.8mm  rot=315.0deg
+  STL_Tail_pose02_supported.stl  x=-22.2mm  y=+49.6mm  rot=0.0deg
+  STL_Fly_pose_2_base_Supported.stl  x=+34.9mm  y=-35.0mm  rot=315.0deg
+30 pieces -> 4 plate(s)

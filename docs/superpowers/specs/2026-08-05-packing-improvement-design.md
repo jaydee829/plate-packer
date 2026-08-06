@@ -135,7 +135,10 @@ gain since the marker). `budget_s = 0` skips the loop entirely: the result is
 the plain greedy pack (identical placements, evaluations = 1).
 
 **Determinism:** all randomness from `numpy.random.default_rng(seed)`. Same
-inputs + config ⇒ identical output.
+inputs + config ⇒ identical output **for a fixed evaluation count**. The stall
+stop is deterministic; the wall-clock budget is not (eval count is
+machine-dependent), so a budget-bounded run can differ across hardware for the
+same seed. Reproducible runs set `budget_s` high so the stall stop wins.
 
 **Observability:** optional `on_improve(evaluations, n_plates, fitness)`
 callback fired at each new best; CLI echoes these live. Final report gains:

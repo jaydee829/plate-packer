@@ -25,7 +25,7 @@ from plate_packer.footprint_io import (
 )
 from plate_packer.improve import improve
 from plate_packer.loading import prepare_mask
-from plate_packer.packer import CHOOSERS, legal_placement_map, pack, rotate_mask
+from plate_packer.packer import CHOOSERS, _fits, pack, rotate_mask
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -139,12 +139,9 @@ def pack_command(
                 )
                 continue
             mask, origin = prepare_mask(doc, cfg.spacing_mm, res)
-            fits = any(
-                rm.shape[0] <= plate_shape[0]
-                and rm.shape[1] <= plate_shape[1]
-                and legal_placement_map(plate_mask, rm).any()
-                for rm in (rotate_mask(mask, a)[0] for a in angles)
-            )
+            # Same predicate pack()/improve() would run with validate=True; call
+            # it directly so the two never drift (both later run validate=False).
+            fits = any(_fits(plate_mask, rotate_mask(mask, a)[0]) for a in angles)
             if not fits:
                 errors.append((f, "does not fit an empty plate at any rotation"))
                 continue

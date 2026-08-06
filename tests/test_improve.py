@@ -191,3 +191,54 @@ def test_improve_on_improve_reports_increasing_fitness():
     fits = [f for _, _, f in seen]
     assert fits == sorted(fits)
     assert all(f2 > f1 for f1, f2 in pairwise(fits))
+
+
+class _FakeClock:
+    """monotonic() returns 0.0 for the first (allowed_iters + 1) calls -- the
+    `start` capture plus that many passing while-guard checks -- then a large
+    value that fails the guard. Emulates a machine that fits exactly
+    `allowed_iters` loop evaluations into the budget, with no real-time jitter.
+    """
+
+    def __init__(self, allowed_iters):
+        self._remaining = allowed_iters + 1
+
+    def __call__(self):
+        if self._remaining > 0:
+            self._remaining -= 1
+            return 0.0
+        return 9999.0
+
+
+# Diverse pieces so different insertion orders yield different packings.
+_WALL_PIECES = [solid(3, 3), solid(2, 4), solid(4, 2), solid(2, 2), solid(3, 2)]
+
+
+@pytest.mark.parametrize(
+    "allowed_iters, expected_evaluations",
+    [(3, 4), (7, 8)],
+    ids=["fast-machine-3", "slow-machine-7"],
+)
+def test_improve_wall_clock_eval_count_follows_time_schedule(
+    monkeypatch, allowed_iters, expected_evaluations
+):
+    # Same seed, different clock speeds -> different evaluation counts. This is
+    # the budget-bounded path that is machine-dependent (see improve() docstring):
+    # patience is set unreachably high so ONLY the wall clock stops the loop.
+    monkeypatch.setattr("plate_packer.improve.time.monotonic", _FakeClock(allowed_iters))
+    res = improve(_WALL_PIECES, (8, 8), budget_s=1.0, patience=10**9, min_improvement=0.0, seed=5)
+    assert res.evaluations == expected_evaluations
+
+
+def test_improve_deterministic_for_fixed_eval_count(monkeypatch):
+    # With the evaluation count pinned (fixed clock schedule) the run is fully
+    # reproducible per seed -- the property the docstring actually guarantees.
+    def run():
+        monkeypatch.setattr("plate_packer.improve.time.monotonic", _FakeClock(6))
+        return improve(
+            _WALL_PIECES, (8, 8), budget_s=1.0, patience=10**9, min_improvement=0.0, seed=5
+        )
+
+    a, b = run(), run()
+    assert a.placements == b.placements
+    assert (a.evaluations, a.improvements) == (b.evaluations, b.improvements)

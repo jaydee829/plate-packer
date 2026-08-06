@@ -152,7 +152,18 @@ def improve(
     Anytime: every evaluation is a complete valid packing, so both stop
     conditions (wall-clock budget, stall: `patience` evaluations without
     `min_improvement` cumulative fitness gain) return the best found.
-    budget_s=0 returns the plain greedy pack. Deterministic per seed.
+    budget_s=0 returns the plain greedy pack.
+
+    Determinism: the search is deterministic per seed *for a fixed number of
+    evaluations* -- each evaluation consumes the shared RNG, so identical draw
+    sequences require identical evaluation counts. The stall stop is itself
+    deterministic (it fires at a fixed evaluation count for given inputs), but
+    the wall-clock budget is NOT: how many evaluations fit in `budget_s`
+    depends on machine speed and load, so a budget-bounded run can yield a
+    different layout for the same seed on different hardware. For a fully
+    reproducible run set `budget_s` high enough that the stall condition
+    always fires first (see key_facts.md).
+
     on_improve(evaluations, n_plates, fitness) fires at each new best.
     """
     choose = choose or contact_first
