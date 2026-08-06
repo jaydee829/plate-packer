@@ -13,6 +13,7 @@ from plate_packer.improve import (
     _move_targeted_swap,
     _move_window_shuffle,
     _reinsert,
+    _update_beam,
     falkenauer,
     improve,
     perturb,
@@ -246,3 +247,35 @@ def test_improve_deterministic_for_fixed_eval_count(monkeypatch):
     a, b = run(), run()
     assert a.placements == b.placements
     assert (a.evaluations, a.improvements) == (b.evaluations, b.improvements)
+
+
+def test_update_beam_keeps_top_k_by_fitness():
+    beam = []
+    for order, fit in ([0, 1, 2], 0.3), ([2, 1, 0], 0.5), ([1, 0, 2], 0.4):
+        beam = _update_beam(beam, order, fit, k=2)
+    assert [f for f, _ in beam] == [0.5, 0.4]
+    assert [o for _, o in beam] == [[2, 1, 0], [1, 0, 2]]
+
+
+def test_update_beam_dedupes_identical_orderings():
+    beam = _update_beam([], [0, 1, 2], 0.3, k=5)
+    beam = _update_beam(beam, [0, 1, 2], 0.3, k=5)
+    assert len(beam) == 1
+
+
+def test_update_beam_keeps_best_fitness_for_repeated_ordering():
+    beam = _update_beam([], [0, 1, 2], 0.3, k=5)
+    beam = _update_beam(beam, [0, 1, 2], 0.7, k=5)
+    assert beam == [(0.7, [0, 1, 2])]
+
+
+def test_update_beam_breaks_fitness_ties_by_ordering():
+    beam = _update_beam([], [2, 1, 0], 0.5, k=5)
+    beam = _update_beam(beam, [0, 1, 2], 0.5, k=5)
+    assert [o for _, o in beam] == [[0, 1, 2], [2, 1, 0]]  # ascending tuple order
+
+
+def test_update_beam_does_not_mutate_input():
+    original = [(0.5, [2, 1, 0])]
+    _update_beam(original, [0, 1, 2], 0.9, k=5)
+    assert original == [(0.5, [2, 1, 0])]

@@ -42,6 +42,17 @@ def falkenauer(fills) -> float:
     return float(sum(f * f for f in fills) / len(fills))
 
 
+def _update_beam(beam, order, fitness, k):
+    """Return a new beam of up to k (fitness, order) pairs, best fitness first,
+    orderings distinct, ties broken by ordering. Input beam is not mutated."""
+    best = {tuple(o): f for f, o in beam}
+    key = tuple(order)
+    if key not in best or fitness > best[key]:
+        best[key] = fitness
+    ranked = sorted(best.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [(f, list(o)) for o, f in ranked[:k]]
+
+
 def _reinsert(order, i_pos, j_pos):
     order = list(order)
     piece = order.pop(i_pos)
