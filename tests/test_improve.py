@@ -159,6 +159,13 @@ def test_improve_budget_zero_equals_greedy_seed_pack():
     assert res.fitness_initial == res.fitness_final
 
 
+def test_improve_rejects_coarse_res_below_working(monkeypatch):
+    # factor < 1 must raise a clean ValueError, not a raw ZeroDivisionError
+    # from conservative_downsample (regression: PR #6 Important #2).
+    with pytest.raises(ValueError, match="working_res_mm"):
+        improve([solid(2, 2)], (6, 6), budget_s=0.0, working_res_mm=0.1, coarse_res_mm=0.04)
+
+
 def test_improve_same_seed_same_result():
     kwargs = dict(budget_s=0.5, patience=10, min_improvement=0.0, seed=7)
     a = improve(PIECES, (6, 6), **kwargs)

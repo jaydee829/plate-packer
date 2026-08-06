@@ -16,7 +16,7 @@ def _analytic_aabb_area(hull_pts: np.ndarray, angle_deg: float) -> float:
     (no rasterization) so it is free of warpAffine interpolation growth."""
     rad = math.radians(angle_deg)
     c, s = math.cos(rad), math.sin(rad)
-    rot = hull_pts @ np.array([[c, -s], [s, c]]).T
+    rot = hull_pts @ np.array([[c, -s], [s, c]])
     return float((np.ptp(rot[:, 0])) * (np.ptp(rot[:, 1])))
 
 

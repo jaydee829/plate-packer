@@ -219,6 +219,10 @@ def improve(
     rng = np.random.default_rng(seed)
 
     factor = round(coarse_res_mm / working_res_mm)
+    if factor < 1:
+        raise ValueError(
+            f"coarse_res_mm ({coarse_res_mm}) must be >= working_res_mm ({working_res_mm})"
+        )
     piece_angles = [
         angle_candidates(p, cap=angle_cap, min_edge_frac=min_edge_frac, safety_grid=safety_grid)
         for p in pieces
@@ -231,7 +235,7 @@ def improve(
 
     fine_piece_px = [int(p.sum()) for p in pieces]
     fine_usable = plate_shape[0] * plate_shape[1] - int(empty_fine.sum())
-    coarse_piece_px = [int(next(iter(coarse_prerot[i].values())).sum()) for i in range(len(pieces))]
+    coarse_piece_px = [int(coarse_prerot[i][0.0].sum()) for i in range(len(pieces))]
     coarse_usable = coarse_shape[0] * coarse_shape[1] - int(coarse_plate_mask.sum())
 
     # A piece that fits the fine empty plate can fail the block-max-grown

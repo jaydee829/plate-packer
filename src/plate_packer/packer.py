@@ -157,8 +157,8 @@ def contact_map(plate: np.ndarray, ring: np.ndarray, edge_weight: float = 1.0) -
     plate border. The border frame is weighted by edge_weight (occupancy stays
     weight 1). Same anchor coordinates/shape as legal_placement_map; np.rint
     collapses FFT noise so score ties are exact."""
-    attraction = np.pad(plate, 1, constant_values=edge_weight)
-    raw = fftconvolve(attraction.astype(np.float32), ring[::-1, ::-1].astype(np.float32), "valid")
+    attraction = np.pad(plate.astype(np.float32), 1, constant_values=edge_weight)
+    raw = fftconvolve(attraction, ring[::-1, ::-1].astype(np.float32), "valid")
     return np.rint(raw)
 
 

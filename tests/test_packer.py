@@ -365,6 +365,19 @@ def test_contact_map_edge_weight_defaults_to_one():
     np.testing.assert_array_equal(contact_map(plate, ring), contact_map(plate, ring, 1.0))
 
 
+def test_contact_map_fractional_edge_weight_not_truncated():
+    # A fractional edge_weight must actually take effect, not be coerced to 0 by
+    # padding a uint8 array (regression: PR #6 Critical).
+    plate = np.zeros((4, 4), np.uint8)
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    zero = contact_map(plate, ring, 0.0)[0, 0]
+    half = contact_map(plate, ring, 0.5)[0, 0]
+    full = contact_map(plate, ring, 1.0)[0, 0]
+    assert zero == 0
+    assert half > zero  # 0.5 must NOT truncate to 0
+    assert half < full  # and stays below full weight
+
+
 # --- difficulty ordering (Task 2, ADR-012) ---
 
 

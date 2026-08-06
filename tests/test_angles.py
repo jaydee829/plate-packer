@@ -1,10 +1,12 @@
 """Tests for shape-aware angle candidates (spec 2026-08-06, ADR-012)."""
 
+import math
+
 import cv2
 import numpy as np
 import pytest
 
-from plate_packer.angles import angle_candidates
+from plate_packer.angles import _analytic_aabb_area, angle_candidates
 
 
 def solid(h, w):
@@ -86,11 +88,26 @@ def test_angle_candidates_sorted_by_compactness_deskews_tilt():
     def analytic_aabb(mask, angle):
         pts = cv2.convexHull(np.argwhere(mask > 0)[:, ::-1].astype(np.int32))[:, 0, :].astype(float)
         rad = np.radians(angle)
-        rot = pts @ np.array([[np.cos(rad), np.sin(rad)], [-np.sin(rad), np.cos(rad)]])
+        rot = pts @ np.array([[np.cos(rad), -np.sin(rad)], [np.sin(rad), np.cos(rad)]])
         return (np.ptp(rot[:, 0])) * (np.ptp(rot[:, 1]))
 
     cands = angle_candidates(tilted)
     assert analytic_aabb(tilted, cands[0]) < analytic_aabb(tilted, 0.0)
+
+
+def test_analytic_aabb_area_matches_rotate_mask_convention():
+    # The compactness key must rotate hull points the SAME way rotate_mask does
+    # (x,y) -> (x*cos + y*sin, -x*sin + y*cos), so ranking reflects the real
+    # placed bbox. Verified on an asymmetric (scalene) point set where the
+    # rotation sign matters (regression: PR #6 Important #1).
+    pts = np.array([[0.0, 0.0], [10.0, 0.0], [3.0, 7.0]])
+    a = 30.0
+    rad = math.radians(a)
+    c, s = math.cos(rad), math.sin(rad)
+    xs = pts[:, 0] * c + pts[:, 1] * s
+    ys = -pts[:, 0] * s + pts[:, 1] * c
+    expected = float(np.ptp(xs) * np.ptp(ys))
+    assert _analytic_aabb_area(pts, a) == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("cap", [1, 2, 3], ids=["cap-1", "cap-2", "cap-3"])

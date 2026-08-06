@@ -2,13 +2,14 @@
 
 import gc
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import typer
 
 from plate_packer.angles import angle_candidates
-from plate_packer.config import load_config
+from plate_packer.config import _validate, load_config
 from plate_packer.export import (
     export_plates,
     load_piece_mesh,
@@ -105,6 +106,13 @@ def pack_command(
 ):
     """Pack STL/OBJ files onto build plates and export one merged STL per plate."""
     cfg = load_config(config)
+    if coarse_res is not None or beam is not None:
+        cfg = replace(
+            cfg,
+            coarse_res_mm=cfg.coarse_res_mm if coarse_res is None else coarse_res,
+            beam=cfg.beam if beam is None else beam,
+        )
+        _validate(cfg)
     fp_dir = footprints_dir or cfg.footprints_dir
     out_dir = out or cfg.output_dir
     res = cfg.working_res_mm
@@ -185,8 +193,8 @@ def pack_command(
             patience=cfg.patience,
             seed=seed_val,
             working_res_mm=res,
-            coarse_res_mm=(cfg.coarse_res_mm if coarse_res is None else coarse_res),
-            beam=(cfg.beam if beam is None else beam),
+            coarse_res_mm=cfg.coarse_res_mm,
+            beam=cfg.beam,
             angle_cap=cfg.angle_cap,
             min_edge_frac=cfg.min_edge_frac,
             safety_grid=cfg.safety_grid,

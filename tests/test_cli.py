@@ -142,6 +142,13 @@ def test_pack_no_verify_skips(tmp_path, monkeypatch):
     assert "verify" not in result.output.lower()
 
 
+def test_pack_cli_rejects_invalid_coarse_res(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src), "--coarse-res", "0.04"])
+    assert result.exit_code != 0
+    assert not isinstance(result.exception, ZeroDivisionError)
+
+
 def test_pack_too_tall_piece_listed_and_aborts(tmp_path, monkeypatch):
     src = _setup(tmp_path, monkeypatch, boxes=((10, 10, 5), (10, 10, 60)))
     result = runner.invoke(app, ["pack", str(src)])
