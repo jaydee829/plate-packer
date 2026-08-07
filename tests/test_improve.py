@@ -382,6 +382,29 @@ def test_scale_placements_scales_anchors_only(scale):
     ]
 
 
+def test_improve_boundary_keeps_full_on_plate():
+    # body: narrow central column; full: full-width raft (shared 12x12 canvas
+    # after prep). With boundary on, the returned layout's full shadows must all
+    # fit the plate (a smoke check that boundary is honored end to end).
+    full = np.ones((12, 12), np.uint8)
+    body = np.zeros((12, 12), np.uint8)
+    body[:, 4:8] = 1
+    res = improve(
+        [body, body],
+        (12, 48),
+        boundary_pieces=[full, full],
+        budget_s=0.0,
+        angle_cap=1,
+        min_edge_frac=0.5,
+        safety_grid=0,
+        validate=True,
+    )
+    for pl in res.placements:
+        fr, _ = rotate_mask(full, pl.angle)
+        assert pl.row + fr.shape[0] <= 12
+        assert pl.col + fr.shape[1] <= 48
+
+
 def test_improve_output_in_bounds_and_collision_free_nondivisible_plate():
     # plate_shape (10, 10) is NOT a multiple of the coarse factor (4), exercising
     # the coarse-plate padding guard: every returned placement (fine re-pack or

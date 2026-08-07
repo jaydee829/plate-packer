@@ -58,6 +58,25 @@ def _prerotate_multi_res(pieces, piece_angles, factor):
     return fine, coarse
 
 
+def _prerotate_paired(pieces, fulls, piece_angles, factor):
+    """Fine + coarse {angle: mask} for body and full, on a shared canvas per
+    angle (rotate_pair). Coarse = block-max downsample of each (supersets =>
+    coarse-legal implies fine-legal)."""
+    from plate_packer.packer import rotate_pair
+
+    fine_b, coarse_b, fine_f, coarse_f = [], [], [], []
+    for body, full, angles in zip(pieces, fulls, piece_angles, strict=True):
+        bvar, fvar = {}, {}
+        for a in angles:
+            fr, br, _ = rotate_pair(full, body, a)
+            fvar[a], bvar[a] = fr, br
+        fine_b.append(bvar)
+        fine_f.append(fvar)
+        coarse_b.append({a: conservative_downsample(m, factor) for a, m in bvar.items()})
+        coarse_f.append({a: conservative_downsample(m, factor) for a, m in fvar.items()})
+    return fine_b, coarse_b, fine_f, coarse_f
+
+
 def _scale_placements(placements, scale):
     """Scale a coarse layout's anchors to fine resolution. Coarse masks are
     block-max supersets of the fine masks, so the fine masks at the scaled
@@ -191,6 +210,7 @@ def improve(
     safety_grid=0,
     edge_contact_weight=1.0,
     ordering="difficulty",
+    boundary_pieces=None,
     validate=True,
     on_improve=None,
 ):
@@ -237,6 +257,12 @@ def improve(
 
     on_improve(evaluations, n_plates, fitness) fires at each new coarse best
     (coarse evaluations/fitness -- the search's internal bookkeeping).
+
+    boundary_pieces (per-piece list of full-shadow prepared masks, parallel to
+    `pieces` which are the body masks) switches both the coarse and fine packs
+    to two-mask collision (body-body for inter-piece, full-plate for the
+    border/margins), same as `pack(..., boundary=)`. When None (default),
+    behavior is single-mask and unchanged.
     """
     choose = choose or contact_first
     rng = np.random.default_rng(seed)
@@ -250,7 +276,13 @@ def improve(
         angle_candidates(p, cap=angle_cap, min_edge_frac=min_edge_frac, safety_grid=safety_grid)
         for p in pieces
     ]
-    fine_prerot, coarse_prerot = _prerotate_multi_res(pieces, piece_angles, factor)
+    if boundary_pieces is None:
+        fine_prerot, coarse_prerot = _prerotate_multi_res(pieces, piece_angles, factor)
+        fine_bound = coarse_bound = None
+    else:
+        fine_prerot, coarse_prerot, fine_bound, coarse_bound = _prerotate_paired(
+            pieces, boundary_pieces, piece_angles, factor
+        )
 
     empty_fine = plate_mask.copy() if plate_mask is not None else np.zeros(plate_shape, np.uint8)
     coarse_plate_mask = conservative_downsample(empty_fine, factor)
@@ -273,11 +305,16 @@ def improve(
     # back to fine resolution for the coarse phase -- still correct, just
     # without the coarse-search speedup. Immune to this on the default
     # edge_margin_mm=0.0 path (all-zero coarse plate seats every piece).
+    # When boundary is on, the full shadow is the binding fit constraint (it,
+    # not the body, must clear the plate border/margins), so fit checks use it.
+    fit_fine = fine_bound if fine_bound is not None else fine_prerot
+    fit_coarse = coarse_bound if coarse_bound is not None else coarse_prerot
     coarse_seats_all = all(
-        any(_fits(coarse_plate_mask, m) for m in variants.values()) for variants in coarse_prerot
+        any(_fits(coarse_plate_mask, m) for m in variants.values()) for variants in fit_coarse
     )
     if not coarse_seats_all:
         coarse_prerot = fine_prerot
+        coarse_bound = fine_bound
         coarse_plate_mask = empty_fine
         coarse_shape = plate_shape
         coarse_piece_px = fine_piece_px
@@ -287,7 +324,7 @@ def improve(
     if validate:
         # One up-front validation at fine resolution; every repack then runs
         # with validate=False (coarse-legal => fine-legal covers the rest).
-        for i, variants in enumerate(fine_prerot):
+        for i, variants in enumerate(fit_fine):
             if not any(_fits(empty_fine, m) for m in variants.values()):
                 raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
 
@@ -298,6 +335,7 @@ def improve(
             plate_mask=coarse_plate_mask,
             choose=choose,
             prerotated=coarse_prerot,
+            boundary=coarse_bound,
             order=order,
             validate=False,
             edge_weight=edge_contact_weight,
@@ -345,6 +383,7 @@ def improve(
             plate_mask=plate_mask,
             choose=choose,
             prerotated=fine_prerot,
+            boundary=fine_bound,
             order=order,
             validate=False,
             edge_weight=edge_contact_weight,
