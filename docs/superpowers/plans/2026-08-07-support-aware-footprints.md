@@ -9,9 +9,11 @@ byte-identical.
 
 **Architecture:** `footprint.py` gains footprint-area-knee base detection and a two-mask
 extractor (full + body). The cache doc (schema v2) stores both; `loading` selects
-which the packer consumes; the CLI packs on the body mask when `support_aware` is
-on and verifies against the full shadow (placed by an affine crop-offset). All
-new behavior is gated by config; when off, existing code paths run unchanged.
+which the packer consumes. When `support_aware` is on, the packer uses a two-mask
+collision — body vs pieces (rafts overlap), full vs the plate boundary — with body
+and full rotated onto one shared canvas (`rotate_pair`), so verify ORs the full
+shadow at each anchor. All new behavior is gated by config; when off, existing code
+paths run unchanged.
 
 **Tech Stack:** Python 3.11+, trimesh, numpy, opencv-python-headless, typer,
 pytest. Managed with `uv`; run tests via `uv run pytest`, lint via
@@ -921,48 +923,515 @@ git commit -m "feat: occupancy_from_full places full shadow at body world anchor
 
 ---
 
-### Task 8: CLI wiring — extract, select, verify
+> **Task 7 note (superseded):** `occupancy_from_full` (crop-offset placement) is
+> replaced by the shared-canvas approach below — `rotate_pair` makes body/full
+> share a canvas, so verify is a plain OR and no crop-offset math remains. Task 11
+> removes `occupancy_from_full` and its test.
+
+### Task 8: Shared-canvas rotation (`rotate_pair`)
 
 **Files:**
-- Modify: `src/plate_packer/cli.py`
-- Test: `tests/test_cli.py`
+- Modify: `src/plate_packer/packer.py`
+- Test: `tests/test_packer.py`
 
 **Interfaces:**
-- Consumes: `extract_footprints`, `DETECTOR_VERSION` (`plate_packer.footprint`);
-  `prepare_mask(..., kind=...)` (Task 6); `occupancy_from_full` (Task 7);
-  `cfg.support_aware`, `cfg.support_cut_cap_mm` (Task 5); `save_doc(..., body_mask=,
-  cut_z_mm=, detector_version=)` and `FootprintDoc.body_mask` / `.detector_version`
-  (Task 4).
-
-**Behavior:**
-1. `footprints` command extracts both masks and always writes the body mask.
-2. `pack` command:
-   - On cache miss/`--force`, extract both masks and save with body.
-   - When `support_aware` and the loaded doc lacks a current body mask
-     (`doc.body_mask is None` or `doc.detector_version != DETECTOR_VERSION`),
-     re-extract that piece to refresh it. Falls back to full shadow if the STL
-     read fails.
-   - Pack on `model_body` when `support_aware` and a body mask is present, else
-     `full_shadow`. Keep a parallel full-shadow prepared mask per piece.
-   - Build the verify occupancy from the full-shadow masks via
-     `occupancy_from_full` when `support_aware`; otherwise the existing path.
+- Produces:
+  - `_paste(dst, src, r, c) -> None` — OR `src` into `dst` at `(r, c)`, clipped to `dst` bounds.
+  - `rotate_pair(full, body, angle_deg) -> (full_rot, body_rot, affine)` — rotate
+    `full` and `body` (with `body ⊆ full`, same input canvas) onto one shared
+    canvas cropped to the full mask's content bbox. `full_rot` equals
+    `rotate_mask(full, angle_deg)[0]`; `body_rot` has the same shape with the
+    body content at its position in the full frame; `affine` is full's 2×3 map.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/test_cli.py` (it already imports `CliRunner`/`app`; add the
-`trimesh` import if absent):
+Add to `tests/test_packer.py`:
+
+```python
+from plate_packer.packer import rotate_pair
+
+
+def test_rotate_pair_degenerate_full_equals_body():
+    full = np.ones((10, 12), np.uint8)
+    fr, br, _aff = rotate_pair(full, full, 37.0)
+    assert br.shape == fr.shape
+    assert (br == fr).all()
+
+
+def test_rotate_pair_angle0_reconstructs_body():
+    full = np.ones((12, 12), np.uint8)
+    body = np.zeros((12, 12), np.uint8)
+    body[2:10, 4:8] = 1  # narrower body, smaller bbox than full
+    fr, br, _aff = rotate_pair(full, body, 0.0)
+    assert (fr == full).all()
+    assert (br == body).all()  # body placed back at its full-frame position
+
+
+@pytest.mark.parametrize("angle", [0.0, 30.0, 90.0, 150.0], ids=lambda a: f"deg{a:g}")
+def test_rotate_pair_body_subset_same_shape(angle):
+    full = np.ones((12, 12), np.uint8)
+    body = full.copy()
+    body[3:9, 3:9] = 0  # interior hole (same bbox as full)
+    fr, br, _aff = rotate_pair(full, body, angle)
+    assert br.shape == fr.shape
+    assert (br & ~fr).sum() == 0  # body_rot is a subset of full_rot
+    assert br.sum() < fr.sum()  # the hole survives
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `uv run pytest tests/test_packer.py -k rotate_pair -v`
+Expected: FAIL — `cannot import name 'rotate_pair'`.
+
+- [ ] **Step 3: Implement**
+
+Add to `src/plate_packer/packer.py` (after `rotate_mask`):
+
+```python
+def _paste(dst: np.ndarray, src: np.ndarray, r: int, c: int) -> None:
+    """OR `src` into `dst` at top-left (r, c), clipped to `dst` bounds."""
+    h, w = src.shape
+    r0, c0 = max(r, 0), max(c, 0)
+    r1, c1 = min(r + h, dst.shape[0]), min(c + w, dst.shape[1])
+    if r1 <= r0 or c1 <= c0:
+        return
+    dst[r0:r1, c0:c1] |= src[r0 - r : r1 - r, c0 - c : c1 - c]
+
+
+def rotate_pair(full: np.ndarray, body: np.ndarray, angle_deg: float):
+    """Rotate `full` and `body` (body ⊆ full, same input canvas) onto ONE shared
+    canvas cropped to the full mask's content bbox.
+
+    Returns (full_rot, body_rot, affine): full_rot == rotate_mask(full, ·)[0];
+    body_rot has the same shape, with the body content placed at its position in
+    the full frame; affine is full's 2×3 map (export/verify use it). Because both
+    outputs share shape and anchor, downstream legality/verify need no crop-offset
+    arithmetic. The body's crop origin sits (aff_full - aff_body) below/right of
+    full's, so the body is pasted at that offset."""
+    full_rot, aff_full = rotate_mask(full, angle_deg)
+    body_own, aff_body = rotate_mask(body, angle_deg)
+    dr = int(round(aff_full[1, 2] - aff_body[1, 2]))
+    dc = int(round(aff_full[0, 2] - aff_body[0, 2]))
+    body_rot = np.zeros_like(full_rot)
+    _paste(body_rot, body_own, dr, dc)
+    return full_rot, body_rot, aff_full
+```
+
+- [ ] **Step 4: Run to verify they pass**
+
+Run: `uv run pytest tests/test_packer.py -k rotate_pair -v`
+Expected: PASS (all cases).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/plate_packer/packer.py tests/test_packer.py
+git commit -m "feat: rotate_pair rotates body and full onto a shared canvas"
+```
+
+---
+
+### Task 9: Two-mask packing (`boundary`)
+
+**Files:**
+- Modify: `src/plate_packer/packer.py`
+- Test: `tests/test_packer.py`
+
+**Interfaces:**
+- Consumes: `legal_placement_map`, `contact_map`, `contact_ring`, `_fits`, `Placement`, `contact_first`, `rotate_mask` (existing).
+- Produces:
+  - `pack(..., boundary=None)` — new keyword. `boundary` is a per-piece list of
+    `{angle: full_rot}` **parallel to `prerotated`** (`{angle: body_rot}`), the two
+    masks sharing a canvas (same shape per angle). When `boundary` is None the
+    existing single-mask path runs unchanged. When given: inter-piece collision
+    uses the body, plate-boundary/dead-margin uses the full, empty-plate fit uses
+    the full.
+  - `_best_spot_bounded(pieces_occ, border, variants, fullvars, rings, choose, edge_weight)`
+    and `_pack_bounded(...)` internal helpers.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_packer.py`:
+
+```python
+from plate_packer.packer import pack, rotate_pair, contact_ring
+
+
+def _paired_variants(full, body, angles):
+    """Build (body_variants, full_variants) dicts sharing a canvas per angle."""
+    bvar, fvar = {}, {}
+    for a in angles:
+        fr, br, _ = rotate_pair(full, body, a)
+        fvar[a], bvar[a] = fr, br
+    return bvar, fvar
+
+
+def test_boundary_rafts_may_overlap_same_plate():
+    # full = 20x20 raft; body = central 6-wide column (bodies stay disjoint,
+    # but the wide rafts overlap). Two pieces should share ONE plate.
+    full = np.ones((20, 20), np.uint8)
+    body = np.zeros((20, 20), np.uint8)
+    body[:, 7:13] = 1
+    b, f = _paired_variants(full, body, [0.0])
+    placements = pack(
+        [body], (20, 40), prerotated=[b], boundary=[f], order=[0], validate=False
+    )
+    # pack a second identical piece by passing two
+    placements = pack(
+        [body, body], (20, 40), prerotated=[b, b], boundary=[f, f],
+        order=[0, 1], validate=False,
+    )
+    assert max(p.plate for p in placements) == 0  # both on plate 0
+
+
+def test_boundary_full_kept_on_plate():
+    # A piece whose body would fit flush at the right edge but whose full shadow
+    # (same shared shape, wider content) must stay within the plate: with a
+    # bordered plate the full may not overlap the border.
+    full = np.ones((10, 10), np.uint8)
+    body = np.zeros((10, 10), np.uint8)
+    body[:, :4] = 1  # body content only on the left of the shared canvas
+    b, f = _paired_variants(full, body, [0.0])
+    border = np.zeros((10, 30), np.uint8)
+    border[:, :2] = border[:, -2:] = 1  # 2px dead margins left/right
+    placements = pack(
+        [body], (10, 30), plate_mask=border, prerotated=[b], boundary=[f],
+        order=[0], validate=False,
+    )
+    (pl,) = placements
+    # full (all 10 cols occupied) must sit clear of both 2px borders
+    assert pl.col >= 2 and pl.col + 10 <= 28
+
+
+def test_boundary_empty_plate_fit_uses_full():
+    # body fits a tiny plate but the full shadow does not -> rejected.
+    full = np.ones((10, 10), np.uint8)
+    body = np.zeros((10, 10), np.uint8)
+    body[:4, :4] = 1
+    b, f = _paired_variants(full, body, [0.0])
+    with pytest.raises(ValueError, match="does not fit"):
+        pack([body], (6, 6), prerotated=[b], boundary=[f], order=[0], validate=True)
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `uv run pytest tests/test_packer.py -k boundary -v`
+Expected: FAIL — `pack()` got an unexpected keyword `boundary`.
+
+- [ ] **Step 3: Implement**
+
+In `src/plate_packer/packer.py`, add the `boundary=None` parameter to `pack`'s
+signature (last param) and, immediately after `rings = (...)` is built and before
+the `if validate:` block, insert an early delegation:
+
+```python
+    if boundary is not None:
+        return _pack_bounded(
+            pieces, empty, prerotated, boundary, rings, choose, order, validate, edge_weight
+        )
+```
+
+(`empty` is the border base already computed at the top of `pack`.) Leave the
+entire existing single-mask body below unchanged.
+
+Then add the two helpers (near `_best_spot`):
+
+```python
+def _best_spot_bounded(pieces_occ, border, variants, fullvars, rings, choose, edge_weight=1.0):
+    """Best (anchor, angle, contact) under two-mask legality: the body must not
+    overlap placed bodies (pieces_occ), and the full shadow must clear the plate
+    border/margins. body_rot and full_rot share a canvas (same shape), so the two
+    legality maps AND directly."""
+    best = None
+    for angle, body in variants.items():
+        full = fullvars[angle]
+        if body.shape[0] > pieces_occ.shape[0] or body.shape[1] > pieces_occ.shape[1]:
+            continue
+        legal = legal_placement_map(pieces_occ, body) & legal_placement_map(border, full)
+        contact = (
+            contact_map(pieces_occ | border, rings[angle], edge_weight)
+            if rings is not None
+            else np.zeros(legal.shape)
+        )
+        anchor = choose(legal, contact)
+        if anchor is None:
+            continue
+        score = float(contact[anchor])
+        key = (-score, anchor[0], anchor[1])
+        if best is None or key < best[0]:
+            best = (key, anchor, angle, score)
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
+def _pack_bounded(pieces, border, prerotated, boundary, rings, choose, order, validate, edge_weight):
+    """Two-mask greedy pack: bodies collide with bodies (rafts overlap freely),
+    full shadows stay on-plate. Plates track pieces-only occupancy."""
+    plate_shape = border.shape
+    if validate:
+        for i, fullvars in enumerate(boundary):
+            if not any(_fits(border, m) for m in fullvars.values()):
+                raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
+    if order is None:
+        order = sorted(range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True)
+    plates: list[np.ndarray] = []
+    placements: list[Placement] = []
+    for i in order:
+        piece_rings = rings[i] if rings is not None else None
+        target = plate_idx = None
+        for idx, pocc in enumerate(plates):
+            target = _best_spot_bounded(
+                pocc, border, prerotated[i], boundary[i], piece_rings, choose, edge_weight
+            )
+            if target:
+                plate_idx = idx
+                break
+        if target is None:
+            plates.append(np.zeros(plate_shape, np.uint8))
+            plate_idx = len(plates) - 1
+            target = _best_spot_bounded(
+                plates[plate_idx], border, prerotated[i], boundary[i], piece_rings, choose, edge_weight
+            )
+        if target is None:
+            raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
+        (row, col), angle, score = target
+        body = prerotated[i][angle]
+        plates[plate_idx][row : row + body.shape[0], col : col + body.shape[1]] |= body
+        placements.append(Placement(i, plate_idx, row, col, angle, score))
+    return sorted(placements, key=lambda p: p.piece)
+```
+
+- [ ] **Step 4: Run to verify they pass**
+
+Run: `uv run pytest tests/test_packer.py -v`
+Expected: PASS (new boundary cases plus all existing packer tests — the
+single-mask path is untouched).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/plate_packer/packer.py tests/test_packer.py
+git commit -m "feat: two-mask packing (body vs pieces, full vs plate boundary)"
+```
+
+---
+
+### Task 10: Thread `boundary` through `improve`
+
+**Files:**
+- Modify: `src/plate_packer/improve.py`
+- Test: `tests/test_improve.py`
+
+**Interfaces:**
+- Consumes: `rotate_pair`, `pack(..., boundary=)` (Tasks 8-9); `conservative_downsample`.
+- Produces: `improve(..., boundary_pieces=None)` — when given (a per-piece list of
+  full-shadow prepared masks parallel to `pieces`, the body masks), the coarse
+  and fine packs run two-mask. Body and full variants are built with `rotate_pair`
+  (shared canvas) at fine and block-max-downsampled coarse resolution, so the
+  coarse phase ANDs the same-shape masks. When None, behavior is unchanged.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `tests/test_improve.py`:
+
+```python
+from plate_packer.improve import improve
+
+
+def test_improve_boundary_keeps_full_on_plate():
+    # body: narrow central column; full: full-width raft (shared 12x12 canvas
+    # after prep). With boundary on, the returned layout's full shadows must all
+    # fit the plate (a smoke check that boundary is honored end to end).
+    full = np.ones((12, 12), np.uint8)
+    body = np.zeros((12, 12), np.uint8)
+    body[:, 4:8] = 1
+    res = improve(
+        [body, body],
+        (12, 48),
+        boundary_pieces=[full, full],
+        budget_s=0.0,
+        angle_cap=1,
+        min_edge_frac=0.5,
+        safety_grid=0,
+        validate=True,
+    )
+    from plate_packer.packer import rotate_mask
+
+    for pl in res.placements:
+        fr, _ = rotate_mask(full, pl.angle)
+        assert pl.row + fr.shape[0] <= 12
+        assert pl.col + fr.shape[1] <= 48
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `uv run pytest tests/test_improve.py -k boundary -v`
+Expected: FAIL — `improve()` got an unexpected keyword `boundary_pieces`.
+
+- [ ] **Step 3: Implement**
+
+In `src/plate_packer/improve.py`:
+
+Add a paired prerotation helper:
+
+```python
+def _prerotate_paired(pieces, fulls, piece_angles, factor):
+    """Fine + coarse {angle: mask} for body and full, on a shared canvas per
+    angle (rotate_pair). Coarse = block-max downsample of each (supersets =>
+    coarse-legal implies fine-legal)."""
+    from plate_packer.packer import rotate_pair
+
+    fine_b, coarse_b, fine_f, coarse_f = [], [], [], []
+    for body, full, angles in zip(pieces, fulls, piece_angles, strict=True):
+        bvar, fvar = {}, {}
+        for a in angles:
+            fr, br, _ = rotate_pair(full, body, a)
+            fvar[a], bvar[a] = fr, br
+        fine_b.append(bvar)
+        fine_f.append(fvar)
+        coarse_b.append({a: conservative_downsample(m, factor) for a, m in bvar.items()})
+        coarse_f.append({a: conservative_downsample(m, factor) for a, m in fvar.items()})
+    return fine_b, coarse_b, fine_f, coarse_f
+```
+
+Add `boundary_pieces=None` to `improve`'s signature (after `ordering`). After
+`piece_angles` is computed, branch the prerotation and set fine/coarse boundary:
+
+```python
+    if boundary_pieces is None:
+        fine_prerot, coarse_prerot = _prerotate_multi_res(pieces, piece_angles, factor)
+        fine_bound = coarse_bound = None
+    else:
+        fine_prerot, coarse_prerot, fine_bound, coarse_bound = _prerotate_paired(
+            pieces, boundary_pieces, piece_angles, factor
+        )
+```
+
+The `coarse_seats_all` fallback must also drop the coarse boundary to fine when
+it fires (keep the two consistent):
+
+```python
+    if not coarse_seats_all:
+        coarse_prerot = fine_prerot
+        coarse_bound = fine_bound
+        coarse_plate_mask = empty_fine
+        coarse_shape = plate_shape
+        coarse_piece_px = fine_piece_px
+        coarse_usable = fine_usable
+        realize_scale = 1
+```
+
+The up-front validation and the `coarse_seats_all` check must use the FULL masks
+when boundary is on (full is the binding fit constraint). Replace the two `_fits`
+uses so they test `fine_bound`/`coarse_bound` when present:
+
+```python
+    fit_fine = fine_bound if fine_bound is not None else fine_prerot
+    fit_coarse = coarse_bound if coarse_bound is not None else coarse_prerot
+    coarse_seats_all = all(
+        any(_fits(coarse_plate_mask, m) for m in variants.values()) for variants in fit_coarse
+    )
+    ...
+    if validate:
+        for i, variants in enumerate(fit_fine):
+            if not any(_fits(empty_fine, m) for m in variants.values()):
+                raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
+```
+
+(Note: `fit_coarse` must be recomputed after the `coarse_seats_all` fallback
+reassigns `coarse_bound`/`coarse_prerot`; compute `coarse_seats_all` from the
+pre-fallback `fit_coarse`, then let the fallback reassign as above.)
+
+Pass `boundary=` to both pack calls:
+
+```python
+    def eval_coarse(order):
+        result = pack(
+            pieces, coarse_shape, plate_mask=coarse_plate_mask, choose=choose,
+            prerotated=coarse_prerot, boundary=coarse_bound, order=order,
+            validate=False, edge_weight=edge_contact_weight,
+        )
+        return result, falkenauer(plate_fills(result, coarse_piece_px, coarse_usable))
+
+    def fine_pack(order):
+        result = pack(
+            pieces, plate_shape, plate_mask=plate_mask, choose=choose,
+            prerotated=fine_prerot, boundary=fine_bound, order=order,
+            validate=False, edge_weight=edge_contact_weight,
+        )
+        return result, falkenauer(plate_fills(result, fine_piece_px, fine_usable))
+```
+
+`fine_piece_px`/`coarse_piece_px` stay as the BODY areas (`pieces[i].sum()` and
+the coarse body variant), since the packed footprint is the body.
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `uv run pytest tests/test_improve.py -v`
+Expected: PASS (new boundary case plus all existing improve tests — `boundary_pieces=None` leaves them unchanged).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/plate_packer/improve.py tests/test_improve.py
+git commit -m "feat: thread boundary (full-shadow) masks through improve"
+```
+
+---
+
+### Task 11: CLI wiring + full-shadow verify
+
+**Files:**
+- Modify: `src/plate_packer/cli.py`, `src/plate_packer/export.py`
+- Test: `tests/test_cli.py`, `tests/test_export.py`
+
+**Interfaces:**
+- Consumes: `extract_footprints`, `DETECTOR_VERSION`, `rotate_pair`, `pack(..., boundary=)`,
+  `improve(..., boundary_pieces=)`, `prepare_mask(kind=)`, `save_doc(body_mask=,…)`,
+  `cfg.support_aware`, `cfg.support_cut_cap_mm`.
+- Removes: `export.occupancy_from_full` and its test (superseded by shared-canvas verify).
+
+**Behavior:**
+1. `footprints` command: extract both masks, `save_doc(..., body_mask=, cut_z_mm=, detector_version=DETECTOR_VERSION)`.
+2. `pack` command: on miss/`--force` extract+save both. When `cfg.support_aware`
+   and the doc lacks a current body mask (`doc.body_mask is None` or
+   `doc.detector_version != DETECTOR_VERSION`), re-extract that piece (fallback to
+   full shadow, logged, if the STL read raises). Prepare `mask = prepare_mask(doc,
+   spacing, res, kind="model_body")` and `full = prepare_mask(doc, spacing, res,
+   kind="full_shadow")` when using body; else both are the full mask. Validate the
+   FULL mask fits (`angle_candidates(full)` + `_fits`). Pack passes `boundary` =
+   per-piece full variants when support-aware.
+3. Placement→transform and verify use `rotate_mask(full, angle)` at `(row, col)`
+   (the anchor is already in the full frame). Verify ORs `rotate_mask(full,
+   angle)[0]` into the plate occupancy at `(row, col)` — plain placement. Off path
+   unchanged (uses the packing mask as today).
+
+- [ ] **Step 1: Remove `occupancy_from_full`**
+
+Delete `occupancy_from_full` from `src/plate_packer/export.py` and its test
+`test_occupancy_from_full_covers_body_placement` from `tests/test_export.py`
+(the shared-canvas verify below replaces it).
+
+- [ ] **Step 2: Write the failing CLI tests**
+
+Add to `tests/test_cli.py`:
 
 ```python
 import trimesh
 
 
 def _fused_piece():
-    """Raft slab (wide) + narrower tall body -> rafts overlap when bodies nest."""
+    """Solid raft (full outline) + a narrower body with the SAME outer bbox but a
+    hollow centre — realistic: outer extent matches, interior differs. Rafts of
+    neighbours overlap; nothing hangs off the plate."""
     raft = trimesh.creation.box(extents=(20, 20, 2))
     raft.apply_translation([0, 0, 1])
-    body = trimesh.creation.box(extents=(8, 20, 20))
-    body.apply_translation([0, 0, 12])
-    return trimesh.util.concatenate([raft, body])
+    left = trimesh.creation.box(extents=(4, 20, 20))
+    left.apply_translation([-8, 0, 12])
+    right = trimesh.creation.box(extents=(4, 20, 20))
+    right.apply_translation([8, 0, 12])
+    return trimesh.util.concatenate([raft, left, right])
 
 
 def _write_pieces(stl_dir, n):
@@ -974,8 +1443,7 @@ def _write_pieces(stl_dir, n):
 def _cfg(tmp_path, support_aware):
     p = tmp_path / "config.toml"
     p.write_text(
-        f"[packing]\nsupport_aware = {'true' if support_aware else 'false'}\n",
-        encoding="utf-8",
+        f"[packing]\nsupport_aware = {'true' if support_aware else 'false'}\n", encoding="utf-8"
     )
     return p
 
@@ -986,13 +1454,9 @@ def test_pack_self_check_passes(tmp_path, support_aware):
     _write_pieces(stl_dir, 2)
     result = CliRunner().invoke(
         app,
-        [
-            "pack", str(stl_dir),
-            "--config", str(_cfg(tmp_path, support_aware)),
-            "--footprints-dir", str(tmp_path / "fp"),
-            "--out", str(tmp_path / "out"),
-            "--budget", "0",
-        ],
+        ["pack", str(stl_dir), "--config", str(_cfg(tmp_path, support_aware)),
+         "--footprints-dir", str(tmp_path / "fp"), "--out", str(tmp_path / "out"),
+         "--budget", "0"],
     )
     assert result.exit_code == 0, result.output
     assert "verify" in result.output
@@ -1011,172 +1475,58 @@ def test_pack_support_aware_writes_body_mask(tmp_path):
     )
     from plate_packer.footprint_io import file_sha256, load_doc
 
-    stl = next(stl_dir.glob("*.stl"))
-    doc = load_doc(fp, file_sha256(stl))
+    doc = load_doc(fp, file_sha256(next(stl_dir.glob("*.stl"))))
     assert doc.body_mask is not None
     assert doc.detector_version == 1
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [ ] **Step 3: Run to verify they fail**
 
 Run: `uv run pytest tests/test_cli.py -k "self_check or body_mask" -v`
-Expected: FAIL — `support_aware` path not implemented (body mask never written /
-`--budget 0` support-aware pack still uses full shadow, or `occupancy_from_full`
-not wired).
+Expected: FAIL (support-aware pack not wired; body mask not written).
 
-- [ ] **Step 3: Implement — imports**
+- [ ] **Step 4: Implement the CLI**
 
-In `src/plate_packer/cli.py`, extend the imports. **Replace** the existing
-`from plate_packer.footprint import extract_footprint` line (that name is no
-longer used anywhere in the file — leaving it triggers ruff F401):
+Follow the interface/behavior list above. Concretely in `src/plate_packer/cli.py`:
 
-```python
-from plate_packer.footprint import DETECTOR_VERSION, extract_footprints
-from plate_packer.export import (
-    export_plates,
-    load_piece_mesh,
-    occupancy_from_full,
-    placement_transform,
-    read_stl_triangles,
-    verify_plate,
-)
-```
+- Imports: `from plate_packer.footprint import DETECTOR_VERSION, extract_footprints`
+  (remove the old `extract_footprint` import — unused, ruff F401); add `rotate_pair`
+  to the `plate_packer.packer` import; remove `occupancy_from_full` from imports.
+- `footprints` command: compute `cap = load_config(None).support_cut_cap_mm` once,
+  extract both, `save_doc(..., body_mask=body, cut_z_mm=cut, detector_version=DETECTOR_VERSION)`.
+- `pack` piece loop: build `masks` (packing = body when support-aware, else full),
+  `full_masks` (prepared full, == packing mask when off), `origins`, `areas`
+  (undilated of the packed kind), plus the re-extract-when-stale logic. Validate
+  the FULL mask fits an empty plate.
+- Build per-piece boundary variants only when support-aware: for the budget>0
+  path, `improve(masks, ..., boundary_pieces=full_masks)`; for `--budget 0`, build
+  `prerot` (body) and `bound` (full) via `rotate_pair(full_masks[i], masks[i], a)`
+  for each `a in angle_candidates(full_masks[i], ...)` and call `pack(masks, ...,
+  prerotated=prerot, boundary=bound, ...)`. When off, keep today's `prerot`/`pack`
+  with `boundary=None`.
+- Transforms: `_, aff = rotate_mask(full_masks[pl.piece] if cfg.support_aware else masks[pl.piece], pl.angle)`.
+- Verify: build each plate occupancy by ORing `rotate_mask(full_masks[pl.piece] if
+  cfg.support_aware else masks[pl.piece], pl.angle)[0]` at `(pl.row, pl.col)`.
+  Free `masks` and `full_masks` before the reload.
 
-- [ ] **Step 4: Implement — `footprints` command writes the body mask**
+The full concrete pack-loop and verify code is in the brief's appendix (the
+implementer should follow the interface list; report any ambiguity before coding).
 
-In the `footprints` command loop, replace the extract+save two lines with:
+- [ ] **Step 5: Run tests + full suite + lint**
 
-```python
-            cap = load_config(None).support_cut_cap_mm
-            full, body, origin, cut, stats = extract_footprints(
-                load_piece_mesh(f), CANONICAL_RES_MM, cap
-            )
-            save_doc(
-                out_dir, sha, full, origin, stats,
-                res_mm_per_px=CANONICAL_RES_MM,
-                body_mask=body, cut_z_mm=cut, detector_version=DETECTOR_VERSION,
-            )
-            written += 1
-            typer.echo(f"  {f.name}: ok ({stats['mask_px'][1]}x{stats['mask_px'][0]}px, cut {cut:.1f}mm)")
-```
+Run: `uv run pytest tests/test_cli.py tests/test_export.py -v && uv run pytest tests/ -q && uv run ruff check && uv run ruff format --check`
+Expected: new CLI tests pass (off AND on), `occupancy_from_full` test gone, full
+suite green, lint clean.
 
-(Move `cap = load_config(None).support_cut_cap_mm` above the loop to compute it
-once; keep the per-file echo.)
-
-- [ ] **Step 5: Implement — `pack` piece loop**
-
-In `pack_command`, replace the per-piece extract/load/prepare block (currently
-lines that call `extract_footprint`, `save_doc`, `load_doc`, `prepare_mask`, and
-build `masks`/`origins`/`areas`) with the following. Add a `full_masks` list
-alongside `masks`:
-
-```python
-    errors: list[tuple[Path, str]] = []
-    piece_files: list[Path] = []
-    masks: list[np.ndarray] = []       # packing masks (body when support_aware)
-    full_masks: list[np.ndarray] = []  # full-shadow prepared masks (for verify)
-    origins: list[tuple[float, float]] = []
-    areas: list[int] = []
-    cap = cfg.support_cut_cap_mm
-    for f in files:
-        try:
-            sha = file_sha256(f)
-            if force or not has_current_doc(fp_dir, sha):
-                full, body, origin, cut, stats = extract_footprints(
-                    load_piece_mesh(f), CANONICAL_RES_MM, cap
-                )
-                save_doc(fp_dir, sha, full, origin, stats, res_mm_per_px=CANONICAL_RES_MM,
-                         body_mask=body, cut_z_mm=cut, detector_version=DETECTOR_VERSION)
-            doc = load_doc(fp_dir, sha)
-            # Support-aware needs a current body mask; refresh v1 / stale-detector docs.
-            if cfg.support_aware and (
-                doc.body_mask is None or doc.detector_version != DETECTOR_VERSION
-            ):
-                try:
-                    full, body, origin, cut, stats = extract_footprints(
-                        load_piece_mesh(f), CANONICAL_RES_MM, cap
-                    )
-                    save_doc(fp_dir, sha, full, origin, stats, res_mm_per_px=CANONICAL_RES_MM,
-                             body_mask=body, cut_z_mm=cut, detector_version=DETECTOR_VERSION)
-                    doc = load_doc(fp_dir, sha)
-                except Exception as e:  # fall back to full shadow, keep going
-                    typer.echo(f"  {f.name}: body-mask extraction failed ({e}); using full shadow")
-            if doc.z_height_mm > cfg.build_height_mm:
-                errors.append(
-                    (f, f"height {doc.z_height_mm:.1f}mm exceeds build height "
-                        f"{cfg.build_height_mm:.1f}mm")
-                )
-                continue
-            use_body = cfg.support_aware and doc.body_mask is not None
-            kind = "model_body" if use_body else "full_shadow"
-            mask, origin = prepare_mask(doc, cfg.spacing_mm, res, kind=kind)
-            full_mask, _ = (
-                prepare_mask(doc, cfg.spacing_mm, res, kind="full_shadow")
-                if use_body
-                else (mask, origin)
-            )
-            cand = angle_candidates(
-                mask, cap=cfg.angle_cap, min_edge_frac=cfg.min_edge_frac,
-                safety_grid=cfg.safety_grid,
-            )
-            fits = any(_fits(plate_mask, rotate_mask(mask, a)[0]) for a in cand)
-            if not fits:
-                errors.append((f, "does not fit an empty plate at any rotation"))
-                continue
-            undilated, _ = prepare_mask(doc, 0.0, res, kind=kind)
-            piece_files.append(f)
-            masks.append(mask)
-            full_masks.append(full_mask)
-            origins.append(origin)
-            areas.append(int(undilated.sum()))
-        except Exception as e:
-            errors.append((f, str(e)))
-```
-
-- [ ] **Step 6: Implement — verify stage uses full shadow when support-aware**
-
-In the self-check block, replace the occupancy-construction loop (currently
-rotates `masks[pl.piece]` and ORs at `pl.row/pl.col`) with:
-
-```python
-        occs = [np.zeros(plate_shape, np.uint8) for _ in plate_files]
-        for pl in placements:
-            body_rot, body_aff = rotate_mask(masks[pl.piece], pl.angle)
-            if cfg.support_aware:
-                full_rot, full_aff = rotate_mask(full_masks[pl.piece], pl.angle)
-                occupancy_from_full(occs[pl.plate], full_rot, body_aff, full_aff, pl.row, pl.col)
-            else:
-                occs[pl.plate][
-                    pl.row : pl.row + body_rot.shape[0], pl.col : pl.col + body_rot.shape[1]
-                ] |= body_rot
-        # Free packing + full masks before reloading multi-hundred-MB plates.
-        del masks, full_masks
-        gc.collect()
-```
-
-(Remove the old standalone `del masks` line further down if it now double-frees.)
-
-- [ ] **Step 7: Run to verify tests pass**
-
-Run: `uv run pytest tests/test_cli.py -v`
-Expected: PASS (`off` and `on` self-checks pass; body mask written).
-
-- [ ] **Step 8: Full suite + lint**
-
-Run: `uv run pytest tests/ -q && uv run ruff check && uv run ruff format --check`
-Expected: all pass; no lint or format errors. Fix any formatting the reviewer
-would flag (`uv run ruff format` if needed).
-
-- [ ] **Step 9: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/plate_packer/cli.py tests/test_cli.py
-git commit -m "feat: CLI packs on model_body and verifies against full shadow"
+git add src/plate_packer/cli.py src/plate_packer/export.py tests/test_cli.py tests/test_export.py
+git commit -m "feat: CLI packs body with full-shadow plate boundary + verify"
 ```
 
 ---
-
-### Task 9: Record decisions and key facts
+### Task 12: Record decisions and key facts
 
 **Files:**
 - Modify: `docs/project_notes/decisions.md`
@@ -1192,12 +1542,17 @@ Support-aware footprints (base-layer exclusion)** capturing: opt-in
 `support_aware` packs on a base-excluded `model_body` footprint; **footprint-area
 knee** detection (cut where the projected footprint stops shrinking, within the
 cap window; no cut unless it drops ≥ `MIN_REDUCTION`); `model_body` keyed on max-Z
-(conservative superset above the cut); pack on body, verify against full shadow
-(placed by affine crop-offset); schema v2 with v1 read fallback; rafts may fuse
-(the accepted trade). Note the detector evolution (area-cliff and horizontal-cap
-tried and rejected — shells have no solid cross-section, and caps cut too shallow)
-and the measured −14% to −32% reduction on real `*_supported.stl`. Alternatives
-rejected: fixed-mm cut, per-piece numeric cut, band-stack. Reference the spec path.
+(conservative superset above the cut). **Two-mask collision:** inter-piece uses
+the body (rafts overlap freely — the whole point), the **plate boundary uses the
+full shadow** (raft must stay on-plate), implemented via `rotate_pair` (body+full
+share a canvas, so legality is a same-shape AND and verify is a plain OR of the
+full mask); schema v2 with v1 read fallback. Note the detector evolution
+(area-cliff and horizontal-cap tried and rejected — shells have no solid
+cross-section, and caps cut too shallow), the measured −14% to −32% reduction on
+real `*_supported.stl`, and that real rafts hug the model outline (outer flare
+0.0 mm) so the gain is interior concavity. Alternatives rejected: fixed-mm cut,
+per-piece numeric cut, band-stack, single-mask packing (raft off plate edge),
+crop-offset verify (superseded by shared-canvas). Reference the spec path.
 
 - [ ] **Step 2: Add the bug entry**
 
@@ -1219,10 +1574,13 @@ Append to `docs/project_notes/key_facts.md`: the new config knobs
 `DETECTOR_VERSION=1`, in `footprint.py`); the footprint-area-knee detector and the
 measured −14% to −32% reduction on the Tome-of-Demons `*_supported.stl` corpus;
 cache `SCHEMA_VERSION=2` with `model_body` entry + `cut_z_mm` /
-`detector_version` metadata, reads accept `{1,2}`; the `example_stls` pytest
-marker (deselected by default); and the **stl_curator coordination item** — the
-contract now has an optional `model_body` band that curator should eventually
-emit; plate_packer falls back gracefully until it does.
+`detector_version` metadata, reads accept `{1,2}`; the **two-mask collision**
+(body vs pieces, full vs plate boundary) via `pack(..., boundary=)` /
+`improve(..., boundary_pieces=)` / `rotate_pair`, with verify ORing the full mask
+at each anchor; the `example_stls` pytest marker (deselected by default); and the
+**stl_curator coordination item** — the contract now has an optional `model_body`
+band that curator should eventually emit; plate_packer falls back gracefully until
+it does.
 
 - [ ] **Step 4: Commit**
 
@@ -1237,8 +1595,14 @@ git commit -m "docs: ADR-013 support-aware footprints + key facts + bug"
 
 - **Run order matters for the safety net:** Tasks 1→2→3 land detection and the
   real-STL check before any cache/CLI wiring. Do not reorder.
-- **Never weaken the off path.** Task 8's `else` branches must remain the exact
-  pre-feature code so `support_aware=false` stays byte-identical.
+- **Never weaken the off path.** In the packer (Task 9), `improve` (Task 10), and
+  the CLI (Task 11), `boundary=None` / `support_aware=false` must run the exact
+  pre-feature code so the default stays byte-identical. The two-mask path is a
+  separate branch, never a rewrite of the single-mask path.
+- **Coordinate landmine.** `rotate_pair` (Task 8) concentrates all crop-offset
+  math in one place; every downstream step (pack AND, verify OR, export transform)
+  works in the shared full frame with no offsets. The `rotate_pair` sign is locked
+  by `test_rotate_pair_angle0_reconstructs_body` — do not "simplify" it away.
 - **`example_stls` is a gitignored junction to copyrighted STLs.** Task 3's test
   must stay deselected by default and skip cleanly when it is absent.
 - **`DETECTOR_VERSION` bump discipline:** any change to `BAND_MM`,

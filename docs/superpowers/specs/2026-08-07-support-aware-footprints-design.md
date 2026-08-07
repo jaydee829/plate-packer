@@ -122,32 +122,44 @@ integration test (§6) runs on the `*_supported.stl` corpus and asserts a real c
 and reduction, landed **early** so the detector was validated before the rest was
 built on top of it.
 
-## 3. Self-check stays honest (`cli.py`, `export.verify_plate`)
+## 3. Two-mask packing: body for pieces, full for the plate
 
-`verify_plate` rasterizes the merged output STL and asserts its shadow is a
-**subset** of the predicted plate occupancy. The merged STL still contains full
-rafts, so if the prediction were built from `model_body` the raft pixels would
-fall outside it and every plate would fail verification.
+Packing only on `model_body` is unsafe at the **plate boundary**: the piece is
+placed by its (narrower) body, but the (wider) full shadow — the raft — can then
+hang off the plate edge, which cannot print. Real Lychee rafts hug the model
+outline (measured outer flare **0.0 mm** on the Tome-of-Demons corpus, so the
+gain is entirely *interior* concavity), but a raft that flares even slightly past
+the body would overhang, so the packer enforces it explicitly rather than relying
+on that.
 
-Resolution: **pack on `model_body`, but build the verification occupancy from
-`full_shadow`.** The merged output (rafts included) is then a subset of the
-prediction, and the extraction → pack → transform → export round-trip stays fully
-validated. The only assertion deliberately dropped is raft-vs-raft
-non-overlap — precisely the freedom this feature introduces. Both masks are
-cached, so `full_shadow` is on hand at verify time regardless of the packing
-mask.
+**Collision model (support-aware):** a placement is legal iff
+- the **body** does not overlap already-placed **bodies** (rafts freely overlap —
+  the feature's whole point), **and**
+- the **full shadow** lies within the plate and clear of its dead margins.
 
-Placing `full_shadow` at the *same world location* as the packed `model_body`
-needs no new coordinate math: the two prepared masks share an identical
-un-cropped rotation canvas (same extraction canvas → same downsample → same
-dilation), so a piece placed at body anchor `(row, col)` has its full-shadow
-anchor at `row + (aff_body[1,2] − aff_full[1,2])`, `col + (aff_body[0,2] −
-aff_full[0,2])`, where `aff_*` are the 2×3 affines `rotate_mask` returns for the
-two masks at the piece's angle. Pure integer placement (clipped to the plate),
-reusing `rotate_mask` — no resampling.
+**Shared-canvas mechanic.** For each piece/angle, the body and full masks are
+rotated onto **one shared canvas** (`rotate_pair`: rotate the full mask with
+`rotate_mask`, then place the body on the full's cropped canvas), so `body_rot`
+and `full_rot` have **identical shape and anchor**. Legality is then a plain
+same-shape AND of two `legal_placement_map` calls — `legal_placement_map(pieces,
+body_rot) & legal_placement_map(plate_border, full_rot)` — with no crop-offset
+arithmetic anywhere. Placement `(row, col, angle)` lives in this shared (full)
+frame. Block-max downsampling to the coarse resolution keeps both masks the same
+shape, so the coarse phase ANDs identically. The empty-plate fit check (ADR-004)
+uses the **full** mask (the binding constraint).
 
-When `support_aware` is off, packing and verification both use `full_shadow` by
-the existing code path, so behavior is byte-identical.
+**Self-check.** `verify_plate` asserts the merged output shadow ⊆ predicted
+occupancy. The output contains full rafts, so the prediction is built from the
+**full** shadow: OR each piece's `rotate_mask(full, angle)` into the plate
+occupancy at its `(row, col)` — a plain placement, since the anchor is already in
+the full frame. The extraction → pack → transform → export round-trip stays fully
+validated; the only assertion dropped is raft-vs-raft non-overlap. The export
+transform likewise derives from `rotate_mask(full, angle)` + `(row, col)`.
+
+**Off path unchanged.** When `support_aware` is off, `boundary` is absent, the
+packer runs its existing single-mask path (`full_shadow` vs a merged
+border+pieces occupancy), and verification uses the existing occupancy loop —
+byte-identical to today.
 
 ## 4. Config surface & defaults (`config.py`)
 
@@ -229,13 +241,25 @@ Parametrized, atomic — one named case per input, per the global rule.
 - Doc round-trips both masks + metadata; `FootprintDoc` exposes them by kind.
 - v1 doc (no body mask) reads cleanly; body absent → fallback path.
 
+**Unit — shared-canvas rotation (`rotate_pair`):**
+- `rotate_pair(full, full, angle)` → the pair is identical (degenerate case).
+- `body ⊆ full` ⇒ `body_rot ⊆ full_rot`, same shape, at several angles.
+
+**Unit — two-mask packing:**
+- Rafts overlap: two pieces whose bodies fit disjoint but whose full shadows
+  overlap → both placed on one plate (body-vs-body legality only).
+- Plate boundary: a piece whose body fits flush at the edge but whose full shadow
+  would overhang is pushed inward (full-vs-border legality) — no off-plate raft.
+- Empty-plate fit uses the full mask (a piece whose full exceeds the plate is
+  rejected even if its body fits).
+
 **Unit — self-check:**
 - Two pieces whose bodies nest but whose rafts overlap → `verify_plate` passes
-  when occupancy is built from `full_shadow`.
+  (occupancy ORed from `full_shadow` at each anchor).
 
 **Unit — toggle:**
-- `support_aware = false` ⇒ pack + verify identical to pre-feature behavior on a
-  fixed fixture (guards the "off = unchanged" promise).
+- `support_aware = false` ⇒ `boundary` unused; pack + verify identical to
+  pre-feature behavior on a fixed fixture (guards the "off = unchanged" promise).
 
 **Config:**
 - Defaults present (`support_aware=False`, `support_cut_cap_mm=5.0`); TOML
