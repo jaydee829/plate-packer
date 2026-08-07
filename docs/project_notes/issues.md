@@ -12,6 +12,12 @@ This file tracks work history and ticket references.
 
 ## Log
 
+### 2026-08-07 - SUPPORT-AWARE: Base-layer-excluded footprints (ADR-013)
+- **Status**: Completed (branch feat/support-aware-footprints, off main; 12 SDD tasks)
+- **Description**: Opt-in `support_aware` packs pre-supported models on a base-excluded `model_body` footprint (full shadow minus the auto-detected raft/support base), recovering interior concavity for denser plates. Footprint-area-knee detector (`detect_base_cut`); two-mask extractor (`extract_footprints`); cache schema v2 (`model_body` band + cut metadata, v1 read fallback); `prepare_mask(kind=)`; two-mask packing (`rotate_pair` + `pack(boundary=)` / `improve(boundary_pieces=)`): body-vs-pieces (rafts overlap) + full-vs-plate-boundary (raft on-plate); verify ORs the full shadow. Off path byte-identical. 323 tests, final review MERGE.
+- **URL**: https://github.com/jaydee829/plate-packer (branch feat/support-aware-footprints)
+- **Notes**: Measured **−14% to −32%** footprint reduction on real Tome-of-Demons `*_supported.stl` (wings/tails/bodies); real rafts hug the outline (flare 0.0mm) so the gain is interior concavity. Detector went through two wrong approaches first (area-cliff, horizontal-cap) before the area-knee — shells have no solid cross-section; see bugs.md for the float32/offset precision bug the gated real-STL integration test caught. Plate-edge raft overhang closed by the two-mask boundary safeguard. TBDs: tune `MIN_REDUCTION` up from 0.05 on real plates; stl_curator to emit the `model_body` band; empty-body guard is defensive (unreachable for real models).
+
 ### 2026-08-07 - PACK-FROM-FILE: `--from-file` selection list for the pack CLI (PR #7)
 - **Status**: Completed (branch feat/pack-from-file, off main)
 - **Description**: `plate-packer pack --from-file PATH` reads newline-separated input paths (# comments + blanks ignored), resolved vs CWD and unioned with positional PATHS (which became optional). Missing listed paths raise a clear `typer.BadParameter`. Motivated by packing `pack_selection.txt` (the 30-piece §8 subset) without a PowerShell `@(Get-Content ...)` splat. 5 new CLI tests.
