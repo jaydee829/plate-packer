@@ -70,6 +70,52 @@ def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     return cut
 
 
+def extract_footprints(mesh, res_mm: float, cut_cap_mm: float):
+    """Return (full_mask, body_mask, origin_mm, cut_mm, stats).
+
+    full_mask is the full vertical shadow (identical to extract_footprint).
+    body_mask, on the same canvas/origin, is the shadow of triangles reaching
+    above the auto-detected base cut (max Z > z0 + cut_mm); when cut_mm == 0 it
+    is a copy of full_mask. stats mirrors extract_footprint's, plus 'cut_mm'.
+    """
+    t0 = time.perf_counter()
+    tris = mesh.triangles
+    finite = np.isfinite(tris).all(axis=(1, 2))
+    n_bad = int((~finite).sum())
+    if n_bad:
+        tris = tris[finite]
+    if len(tris) == 0:
+        raise ValueError("mesh has no finite triangles")
+    xy = tris[:, :, :2]
+    flat = xy.reshape(-1, 2)
+    origin = flat.min(axis=0)
+    size_px = np.round((flat.max(axis=0) - origin) / res_mm).astype(int) + 1
+    shape = (int(size_px[1]), int(size_px[0]))
+    tri_px = np.round((xy - origin) / res_mm).astype(np.int32)
+    full_mask = _raster(tri_px, shape)
+
+    cut_mm = detect_base_cut(tris, res_mm, cut_cap_mm)
+    if cut_mm <= 0:
+        body_mask = full_mask.copy()
+    else:
+        z0 = float(tris[:, :, 2].min())
+        keep = tris[:, :, 2].max(axis=1) > z0 + cut_mm
+        body_mask = _raster(tri_px[keep], shape)
+    t_raster = time.perf_counter() - t0
+
+    stats = {
+        "triangles": len(mesh.triangles),
+        "dropped_nonfinite": n_bad,
+        "z_height_mm": float(tris[:, :, 2].max() - tris[:, :, 2].min()),
+        "footprint_mm": tuple((flat.max(axis=0) - flat.min(axis=0)).round(1)),
+        "mask_px": full_mask.shape,
+        "coverage": float(full_mask.mean()),
+        "raster_s": t_raster,
+        "cut_mm": cut_mm,
+    }
+    return full_mask, body_mask, (float(origin[0]), float(origin[1])), cut_mm, stats
+
+
 def extract_footprint(mesh: trimesh.Trimesh, res_mm: float) -> tuple[np.ndarray, np.ndarray, dict]:
     """Return (mask, origin_mm, stats). Mask is uint8 {0,1}, row 0 = min Y,
     canvas is the exact triangle bounds. origin_mm = XY of pixel (0,0)."""

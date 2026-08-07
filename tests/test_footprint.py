@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from plate_packer.footprint import BAND_MM, detect_base_cut, extract_footprint
+from plate_packer.footprint import BAND_MM, detect_base_cut, extract_footprint, extract_footprints
 
 RES = 0.1
 
@@ -105,3 +105,28 @@ def test_detect_base_cut(tris, expected):
 def test_detect_base_cut_zero_cap_returns_zero():
     tris = _tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12))
     assert detect_base_cut(tris, 0.1, 0.0) == 0.0
+
+
+def test_extract_footprints_full_matches_extract_footprint():
+    mesh = trimesh.creation.box(extents=(20, 10, 5))
+    ref, _o, _s = extract_footprint(mesh, RES)
+    full, _body, _origin, _cut, _stats = extract_footprints(mesh, RES, 5.0)
+    assert full.shape == ref.shape
+    assert (full == ref).all()
+
+
+def test_extract_footprints_body_subset_of_full_and_smaller():
+    mesh = trimesh.util.concatenate([_box((20, 20), 0, 2), _box((1, 1), 2, 12)])
+    full, body, _origin, cut, stats = extract_footprints(mesh, RES, 5.0)
+    assert full.shape == body.shape
+    assert (body & ~full).sum() == 0  # body is a subset of full
+    assert 0 < body.sum() < full.sum()  # raft slab removed
+    assert cut == pytest.approx(2.0, abs=BAND_MM)
+    assert stats["cut_mm"] == cut
+
+
+def test_extract_footprints_no_cut_gives_identical_body():
+    mesh = _box((1, 1), 0, 12)  # pillar only -> cut 0
+    full, body, _origin, cut, _stats = extract_footprints(mesh, RES, 5.0)
+    assert cut == 0.0
+    assert (body == full).all()
