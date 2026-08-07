@@ -27,7 +27,7 @@ pytest. Managed with `uv`; run tests via `uv run pytest`, lint via
 - **Cap is the search window.** Detection scans only `[z0, z0 + cap]`; no cliff in
   the window → cut = 0. Never cut deeper than the cap; never scan the whole model.
 - **Detector constants** live in `footprint.py`: `BAND_MM = 0.25`,
-  `CLIFF_FRAC = 0.7`, `MIN_BASE_FRAC = 0.15`, `DETECTOR_VERSION = 1`. Only
+  `HORIZ_NZ = 0.9`, `MIN_BASE_FRAC = 0.10`, `DETECTOR_VERSION = 1`. Only
   `support_aware` and `support_cut_cap_mm` (default `5.0`) are user config.
 - **Canonical resolution** stays `CANONICAL_RES_MM = 0.05`; both masks share one
   extraction canvas/origin.
@@ -46,14 +46,14 @@ pytest. Managed with `uv`; run tests via `uv run pytest`, lint via
 
 **Interfaces:**
 - Produces:
-  - `BAND_MM = 0.25`, `CLIFF_FRAC = 0.7`, `MIN_BASE_FRAC = 0.15`,
+  - `BAND_MM = 0.25`, `HORIZ_NZ = 0.9`, `MIN_BASE_FRAC = 0.10`,
     `DETECTOR_VERSION = 1` (module constants).
   - `_raster(tri_px: np.ndarray, shape: tuple[int, int]) -> np.ndarray` — fill
     each `(k, 3, 2)` int32 triangle into a `shape` uint8 {0,1} canvas.
   - `detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float` —
     offset above the mesh base below which geometry is raft/support base; `0.0`
-    when no raft-like cliff is found in `[z0, z0 + cap_mm]`. `tris` is an
-    `(n, 3, 3)` finite triangle array.
+    when no substantial horizontal cap is found in `[z0, z0 + cap_mm]`. `tris` is
+    an `(n, 3, 3)` finite triangle array.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -108,9 +108,9 @@ Add to `src/plate_packer/footprint.py` (after the imports and before
 `extract_footprint`):
 
 ```python
-BAND_MM = 0.25  # Z slab height for cross-sectional area scan
-CLIFF_FRAC = 0.7  # area drop below this fraction of the running peak = cliff
-MIN_BASE_FRAC = 0.15  # a base plateau must be >= this fraction of full-shadow area
+BAND_MM = 0.25  # Z bin height for the horizontal-cap scan
+HORIZ_NZ = 0.9  # |unit normal z| above this = near-horizontal (cap) face
+MIN_BASE_FRAC = 0.10  # a cap must cover >= this fraction of the footprint to be a raft
 DETECTOR_VERSION = 1  # bump when any detector constant changes (invalidates body masks)
 
 
@@ -126,12 +126,14 @@ def _raster(tri_px: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
 def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     """Offset above the mesh base below which geometry is raft/support base.
 
-    Walks occupied cross-sectional area up from z0 in BAND_MM slabs, but only
-    within the search window [z0, z0 + cap_mm]. A wide base plateau followed by a
-    sharp area drop (thin pillars) is a cliff; the cut is the bottom of the first
-    band whose area falls below CLIFF_FRAC of the running peak, provided that peak
-    is at least MIN_BASE_FRAC of the full-shadow area. Returns 0.0 (no cut) for
-    every ambiguous case -- the safe default (model_body == full_shadow).
+    STL meshes are hollow shells, so a slab has no interior triangles at
+    mid-height -- only its flat top/bottom *cap* faces carry area. A raft is such
+    a big flat horizontal surface, so we detect it directly: bin near-horizontal
+    faces by height and cut at the HIGHEST band within [z0, z0 + cap_mm] whose cap
+    shadow covers at least MIN_BASE_FRAC of the full footprint (the raft's top
+    surface). Returns 0.0 (no cut, the safe default) when no such cap exists in
+    the window -- so a raftless model, a wide solid box (top cap out of window),
+    a too-small foot, or a base taller than the cap all leave model_body == full.
     """
     if cap_mm <= 0 or len(tris) == 0:
         return 0.0
@@ -148,19 +150,21 @@ def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     full_area = int(_raster(tri_px, shape).sum())
     if full_area == 0:
         return 0.0
-    tri_zmin, tri_zmax = z.min(axis=1), z.max(axis=1)
+    # Near-horizontal (cap) faces: |unit normal_z| > HORIZ_NZ, excluding degenerate.
+    normals = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    norm = np.linalg.norm(normals, axis=1)
+    horiz = (norm > 0) & (np.abs(normals[:, 2]) > HORIZ_NZ * norm)
+    tri_z = z.mean(axis=1)
     top = min(z0 + cap_mm, z1)
     n_bands = int((top - z0) / BAND_MM)
-    a_peak = 0
+    cut = 0.0
     for i in range(n_bands):
         band_lo = z0 + i * BAND_MM
         band_hi = band_lo + BAND_MM
-        sel = (tri_zmax > band_lo) & (tri_zmin < band_hi)
-        a = int(_raster(tri_px[sel], shape).sum()) if sel.any() else 0
-        if a_peak >= MIN_BASE_FRAC * full_area and a < CLIFF_FRAC * a_peak:
-            return float(band_lo - z0)
-        a_peak = max(a_peak, a)
-    return 0.0
+        sel = horiz & (tri_z >= band_lo) & (tri_z < band_hi)
+        if sel.any() and int(_raster(tri_px[sel], shape).sum()) >= MIN_BASE_FRAC * full_area:
+            cut = band_lo - z0  # loop ascends; the highest qualifying cap wins
+    return cut
 ```
 
 - [ ] **Step 4: Run to verify they pass**
@@ -1167,7 +1171,7 @@ cut, per-piece numeric cut, band-stack). Reference the spec path.
 
 Append to `docs/project_notes/key_facts.md`: the new config knobs
 (`support_aware=false`, `support_cut_cap_mm=5.0`); detector constants
-(`BAND_MM=0.25`, `CLIFF_FRAC=0.7`, `MIN_BASE_FRAC=0.15`, `DETECTOR_VERSION=1`, in
+(`BAND_MM=0.25`, `HORIZ_NZ=0.9`, `MIN_BASE_FRAC=0.10`, `DETECTOR_VERSION=1`, in
 `footprint.py`); cache `SCHEMA_VERSION=2` with `model_body` entry + `cut_z_mm` /
 `detector_version` metadata, reads accept `{1,2}`; the `example_stls` pytest
 marker (deselected by default); and the **stl_curator coordination item** — the
@@ -1191,6 +1195,6 @@ git commit -m "docs: ADR-013 support-aware footprints + key facts"
   pre-feature code so `support_aware=false` stays byte-identical.
 - **`example_stls` is a gitignored junction to copyrighted STLs.** Task 3's test
   must stay deselected by default and skip cleanly when it is absent.
-- **`DETECTOR_VERSION` bump discipline:** any change to `BAND_MM`, `CLIFF_FRAC`, or
+- **`DETECTOR_VERSION` bump discipline:** any change to `BAND_MM`, `HORIZ_NZ`, or
   `MIN_BASE_FRAC` must bump `DETECTOR_VERSION` so support-aware runs re-extract
   stale body masks automatically.
