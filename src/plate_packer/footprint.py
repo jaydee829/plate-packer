@@ -11,9 +11,10 @@ import cv2
 import numpy as np
 import trimesh
 
-BAND_MM = 0.25  # Z bin height for the horizontal-cap scan
-HORIZ_NZ = 0.9  # |unit normal z| above this = near-horizontal (cap) face
-MIN_BASE_FRAC = 0.10  # a cap must cover >= this fraction of the footprint to be a raft
+BAND_MM = 0.25  # Z step for the cut-depth sweep
+MIN_REDUCTION = 0.05  # min footprint drop (fraction) worth excluding a base for
+FLAT_EPS = 0.01  # plateau tolerance (fraction of footprint) for the knee
+DETECT_RES_MM = 0.2  # coarse raster res for detection (area ratios are scale-tolerant)
 DETECTOR_VERSION = 1  # bump when any detector constant changes (invalidates body masks)
 
 
@@ -29,14 +30,14 @@ def _raster(tri_px: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
 def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     """Offset above the mesh base below which geometry is raft/support base.
 
-    STL meshes are hollow shells, so a slab has no interior triangles at
-    mid-height -- only its flat top/bottom *cap* faces carry area. A raft is such
-    a big flat horizontal surface, so we detect it directly: bin near-horizontal
-    faces by height and cut at the HIGHEST band within [z0, z0 + cap_mm] whose cap
-    shadow covers at least MIN_BASE_FRAC of the full footprint (the raft's top
-    surface). Returns 0.0 (no cut, the safe default) when no such cap exists in
-    the window -- so a raftless model, a wide solid box (top cap out of window),
-    a too-small foot, or a base taller than the cap all leave model_body == full.
+    Detected by the footprint-area knee: as the cut depth d rises, the model-body
+    footprint (shadow of triangles with max Z > z0 + d) shrinks sharply through
+    the base then plateaus. We cut at the plateau's start. Computed in a single
+    raster pass: paint each pixel with the highest max-Z of the triangles covering
+    it (fill in ascending max-Z so the top wins), then area(d) is a threshold on
+    that top-reach map. Returns 0.0 (no cut, the safe default) when the footprint
+    never drops by MIN_REDUCTION inside [z0, z0 + cap_mm] -- so a raftless model, a
+    wide solid box, or a base taller than the cap all leave model_body == full.
     """
     if cap_mm <= 0 or len(tris) == 0:
         return 0.0
@@ -50,24 +51,29 @@ def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     size_px = np.round((flat.max(axis=0) - origin) / res_mm).astype(int) + 1
     shape = (int(size_px[1]), int(size_px[0]))
     tri_px = np.round((xy - origin) / res_mm).astype(np.int32)
-    full_area = int(_raster(tri_px, shape).sum())
-    if full_area == 0:
+    tri_zmax = z.max(axis=1)
+    # Per-pixel top-reach map: paint (max_Z - z0 + 1) with the highest last so each
+    # pixel keeps its tallest triangle. Occupied pixels are >= 1; empty stay 0.
+    reach = np.zeros(shape, np.float32)
+    for i in np.argsort(tri_zmax):
+        cv2.fillConvexPoly(reach, tri_px[i], float(tri_zmax[i] - z0 + 1.0))
+
+    def area(d):  # pixels whose top reach is above cut depth d
+        return int((reach > d + 1.0).sum())
+
+    a_full = area(0.0)
+    if a_full == 0:
         return 0.0
-    # Near-horizontal (cap) faces: |unit normal_z| > HORIZ_NZ, excluding degenerate.
-    normals = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
-    norm = np.linalg.norm(normals, axis=1)
-    horiz = (norm > 0) & (np.abs(normals[:, 2]) > HORIZ_NZ * norm)
-    tri_z = z.mean(axis=1)
-    top = min(z0 + cap_mm, z1)
-    n_bands = int((top - z0) / BAND_MM)
-    cut = 0.0
-    for i in range(n_bands):
-        band_lo = z0 + i * BAND_MM
-        band_hi = band_lo + BAND_MM
-        sel = horiz & (tri_z >= band_lo) & (tri_z < band_hi)
-        if sel.any() and int(_raster(tri_px[sel], shape).sum()) >= MIN_BASE_FRAC * full_area:
-            cut = band_lo - z0  # loop ascends; the highest qualifying cap wins
-    return cut
+    n_bands = int(cap_mm / BAND_MM)
+    areas = [area(i * BAND_MM) for i in range(n_bands + 1)]
+    a_min = min(areas)
+    if a_full - a_min < MIN_REDUCTION * a_full:
+        return 0.0  # base not worth excluding
+    thresh = a_min + FLAT_EPS * a_full
+    for i in range(n_bands + 1):
+        if areas[i] <= thresh:  # first depth on the plateau = the knee
+            return float(i * BAND_MM)
+    return 0.0
 
 
 def extract_footprints(mesh, res_mm: float, cut_cap_mm: float):
@@ -94,7 +100,7 @@ def extract_footprints(mesh, res_mm: float, cut_cap_mm: float):
     tri_px = np.round((xy - origin) / res_mm).astype(np.int32)
     full_mask = _raster(tri_px, shape)
 
-    cut_mm = detect_base_cut(tris, res_mm, cut_cap_mm)
+    cut_mm = detect_base_cut(tris, DETECT_RES_MM, cut_cap_mm)
     if cut_mm <= 0:
         body_mask = full_mask.copy()
     else:
