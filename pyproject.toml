@@ -47,3 +47,7 @@ select = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not example_stls'"
+markers = [
+    "example_stls: integration tests needing the gitignored example_stls junction (opt in with -m example_stls)",
+]
