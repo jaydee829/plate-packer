@@ -85,7 +85,9 @@ def _tris(*boxes):
         pytest.param(_tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)), 2.0, id="raft-then-pillar"),
         pytest.param(_tris(_box((1, 1), 0, 12)), 0.0, id="pillar-only-no-base"),
         pytest.param(_tris(_box((20, 20), 0, 12)), 0.0, id="wide-solid-no-drop"),
-        pytest.param(_tris(_box((20, 20), 0, 8), _box((1, 1), 8, 18)), 0.0, id="base-past-cap-window"),
+        pytest.param(
+            _tris(_box((20, 20), 0, 8), _box((1, 1), 8, 18)), 0.0, id="base-past-cap-window"
+        ),
         pytest.param(
             _tris(_box((2, 2), 0, 0.5), _box((1, 1), 0.5, 8), _box((20, 20), 8, 10)),
             0.0,
@@ -454,8 +456,16 @@ def body_mask():
 
 def test_round_trip_preserves_body_mask_and_cut(tmp_path):
     full, body = checker_mask(), body_mask()
-    save_doc(tmp_path, SHA_A, full, (-10.0, -5.0), STATS,
-             body_mask=body, cut_z_mm=2.5, detector_version=1)
+    save_doc(
+        tmp_path,
+        SHA_A,
+        full,
+        (-10.0, -5.0),
+        STATS,
+        body_mask=body,
+        cut_z_mm=2.5,
+        detector_version=1,
+    )
     doc = load_doc(tmp_path, SHA_A)
     assert (doc.masks[0] == full).all()
     assert doc.body_mask is not None
@@ -465,8 +475,16 @@ def test_round_trip_preserves_body_mask_and_cut(tmp_path):
 
 
 def test_body_mask_written_as_model_body_entry(tmp_path):
-    save_doc(tmp_path, SHA_A, checker_mask(), (0.0, 0.0), STATS,
-             body_mask=body_mask(), cut_z_mm=2.5, detector_version=1)
+    save_doc(
+        tmp_path,
+        SHA_A,
+        checker_mask(),
+        (0.0, 0.0),
+        STATS,
+        body_mask=body_mask(),
+        cut_z_mm=2.5,
+        detector_version=1,
+    )
     raw = json.loads(doc_path(tmp_path, SHA_A).read_text(encoding="utf-8"))
     kinds = [fp["kind"] for fp in raw["footprints"]]
     assert kinds == ["full_shadow", "model_body"]
@@ -549,9 +567,7 @@ def save_doc(
     cut_z_mm=None,
     detector_version=None,
 ) -> Path:
-    footprints = [
-        {"kind": "full_shadow", "z_band_mm": [0.0, None], "mask_png_b64": _png_b64(mask)}
-    ]
+    footprints = [{"kind": "full_shadow", "z_band_mm": [0.0, None], "mask_png_b64": _png_b64(mask)}]
     doc = {
         "schema_version": SCHEMA_VERSION,
         "generator": _GENERATOR,
@@ -668,9 +684,7 @@ def test_support_knobs_load_from_toml(tmp_path):
     assert cfg.support_cut_cap_mm == 3.0
 
 
-@pytest.mark.parametrize(
-    "value", [pytest.param("0", id="zero"), pytest.param("-1", id="negative")]
-)
+@pytest.mark.parametrize("value", [pytest.param("0", id="zero"), pytest.param("-1", id="negative")])
 def test_support_cut_cap_must_be_positive(tmp_path, value):
     p = tmp_path / "config.toml"
     p.write_text(f"[packing]\nsupport_cut_cap_mm = {value}\n", encoding="utf-8")
@@ -695,10 +709,8 @@ In `src/plate_packer/config.py`, add to `PackConfig` (after `ordering`):
 In `load_config`, add to the `PackConfig(...)` construction:
 
 ```python
-        support_aware=bool(packing.get("support_aware", PackConfig.support_aware)),
-        support_cut_cap_mm=float(
-            packing.get("support_cut_cap_mm", PackConfig.support_cut_cap_mm)
-        ),
+support_aware = (bool(packing.get("support_aware", PackConfig.support_aware)),)
+support_cut_cap_mm = (float(packing.get("support_cut_cap_mm", PackConfig.support_cut_cap_mm)),)
 ```
 
 In `_validate`, add:
@@ -1073,13 +1085,15 @@ def test_boundary_rafts_may_overlap_same_plate():
     body = np.zeros((20, 20), np.uint8)
     body[:, 7:13] = 1
     b, f = _paired_variants(full, body, [0.0])
-    placements = pack(
-        [body], (20, 40), prerotated=[b], boundary=[f], order=[0], validate=False
-    )
+    placements = pack([body], (20, 40), prerotated=[b], boundary=[f], order=[0], validate=False)
     # pack a second identical piece by passing two
     placements = pack(
-        [body, body], (20, 40), prerotated=[b, b], boundary=[f, f],
-        order=[0, 1], validate=False,
+        [body, body],
+        (20, 40),
+        prerotated=[b, b],
+        boundary=[f, f],
+        order=[0, 1],
+        validate=False,
     )
     assert max(p.plate for p in placements) == 0  # both on plate 0
 
@@ -1095,8 +1109,13 @@ def test_boundary_full_kept_on_plate():
     border = np.zeros((10, 30), np.uint8)
     border[:, :2] = border[:, -2:] = 1  # 2px dead margins left/right
     placements = pack(
-        [body], (10, 30), plate_mask=border, prerotated=[b], boundary=[f],
-        order=[0], validate=False,
+        [body],
+        (10, 30),
+        plate_mask=border,
+        prerotated=[b],
+        boundary=[f],
+        order=[0],
+        validate=False,
     )
     (pl,) = placements
     # full (all 10 cols occupied) must sit clear of both 2px borders
@@ -1165,7 +1184,9 @@ def _best_spot_bounded(pieces_occ, border, variants, fullvars, rings, choose, ed
     return best[1], best[2], best[3]
 
 
-def _pack_bounded(pieces, border, prerotated, boundary, rings, choose, order, validate, edge_weight):
+def _pack_bounded(
+    pieces, border, prerotated, boundary, rings, choose, order, validate, edge_weight
+):
     """Two-mask greedy pack: bodies collide with bodies (rafts overlap freely),
     full shadows stay on-plate. Plates track pieces-only occupancy."""
     plate_shape = border.shape
@@ -1191,7 +1212,13 @@ def _pack_bounded(pieces, border, prerotated, boundary, rings, choose, order, va
             plates.append(np.zeros(plate_shape, np.uint8))
             plate_idx = len(plates) - 1
             target = _best_spot_bounded(
-                plates[plate_idx], border, prerotated[i], boundary[i], piece_rings, choose, edge_weight
+                plates[plate_idx],
+                border,
+                prerotated[i],
+                boundary[i],
+                piece_rings,
+                choose,
+                edge_weight,
             )
         if target is None:
             raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
@@ -1346,21 +1373,34 @@ pre-fallback `fit_coarse`, then let the fallback reassign as above.)
 Pass `boundary=` to both pack calls:
 
 ```python
-    def eval_coarse(order):
-        result = pack(
-            pieces, coarse_shape, plate_mask=coarse_plate_mask, choose=choose,
-            prerotated=coarse_prerot, boundary=coarse_bound, order=order,
-            validate=False, edge_weight=edge_contact_weight,
-        )
-        return result, falkenauer(plate_fills(result, coarse_piece_px, coarse_usable))
+def eval_coarse(order):
+    result = pack(
+        pieces,
+        coarse_shape,
+        plate_mask=coarse_plate_mask,
+        choose=choose,
+        prerotated=coarse_prerot,
+        boundary=coarse_bound,
+        order=order,
+        validate=False,
+        edge_weight=edge_contact_weight,
+    )
+    return result, falkenauer(plate_fills(result, coarse_piece_px, coarse_usable))
 
-    def fine_pack(order):
-        result = pack(
-            pieces, plate_shape, plate_mask=plate_mask, choose=choose,
-            prerotated=fine_prerot, boundary=fine_bound, order=order,
-            validate=False, edge_weight=edge_contact_weight,
-        )
-        return result, falkenauer(plate_fills(result, fine_piece_px, fine_usable))
+
+def fine_pack(order):
+    result = pack(
+        pieces,
+        plate_shape,
+        plate_mask=plate_mask,
+        choose=choose,
+        prerotated=fine_prerot,
+        boundary=fine_bound,
+        order=order,
+        validate=False,
+        edge_weight=edge_contact_weight,
+    )
+    return result, falkenauer(plate_fills(result, fine_piece_px, fine_usable))
 ```
 
 `fine_piece_px`/`coarse_piece_px` stay as the BODY areas (`pieces[i].sum()` and
@@ -1454,9 +1494,18 @@ def test_pack_self_check_passes(tmp_path, support_aware):
     _write_pieces(stl_dir, 2)
     result = CliRunner().invoke(
         app,
-        ["pack", str(stl_dir), "--config", str(_cfg(tmp_path, support_aware)),
-         "--footprints-dir", str(tmp_path / "fp"), "--out", str(tmp_path / "out"),
-         "--budget", "0"],
+        [
+            "pack",
+            str(stl_dir),
+            "--config",
+            str(_cfg(tmp_path, support_aware)),
+            "--footprints-dir",
+            str(tmp_path / "fp"),
+            "--out",
+            str(tmp_path / "out"),
+            "--budget",
+            "0",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "verify" in result.output
@@ -1470,8 +1519,18 @@ def test_pack_support_aware_writes_body_mask(tmp_path):
     fp = tmp_path / "fp"
     CliRunner().invoke(
         app,
-        ["pack", str(stl_dir), "--config", str(_cfg(tmp_path, True)),
-         "--footprints-dir", str(fp), "--out", str(tmp_path / "out"), "--budget", "0"],
+        [
+            "pack",
+            str(stl_dir),
+            "--config",
+            str(_cfg(tmp_path, True)),
+            "--footprints-dir",
+            str(fp),
+            "--out",
+            str(tmp_path / "out"),
+            "--budget",
+            "0",
+        ],
     )
     from plate_packer.footprint_io import file_sha256, load_doc
 
