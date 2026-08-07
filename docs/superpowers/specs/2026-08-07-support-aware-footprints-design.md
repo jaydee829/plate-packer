@@ -72,7 +72,10 @@ model's base:
    tracking the running peak `A_peak`. The cut is the top of the first band whose
    `A(z) < CLIFF_FRAC × A_peak` — *provided* `A_peak ≥ MIN_BASE_FRAC × A_max`,
    where `A_max` is the peak area over *all* bands (the model's widest
-   cross-section). No qualifying cliff → cut = 0. Initial `CLIFF_FRAC = 0.5`.
+   cross-section). No qualifying cliff → cut = 0. Initial `CLIFF_FRAC = 0.7`
+   (start **sensitive** — a ~30% drop already triggers a cut, so Lychee's shallow
+   thin-strip cliffs are caught; walk it back down toward 0.5 once functionality
+   is proven, re-packing to see how aggressive we can safely go).
 4. **Clamp** the cut to `[0, support_cut_cap_mm]`, then set `model_body` from
    triangles with max Z `> cut_z` (§1).
 
