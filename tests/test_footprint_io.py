@@ -34,6 +34,12 @@ def checker_mask():
     return mask
 
 
+def body_mask():
+    m = np.zeros((8, 6), np.uint8)
+    m[2:6, 1:5] = 1
+    return m
+
+
 @pytest.mark.parametrize(
     ("sha", "expected_parts"),
     [
@@ -139,3 +145,62 @@ def test_save_doc_records_the_resolution_it_was_given(tmp_path):
     save_doc(tmp_path, SHA_A, checker_mask(), (0.0, 0.0), STATS, res_mm_per_px=0.2)
     doc = load_doc(tmp_path, SHA_A)
     assert doc.res_mm_per_px == 0.2
+
+
+def test_round_trip_preserves_body_mask_and_cut(tmp_path):
+    full, body = checker_mask(), body_mask()
+    save_doc(
+        tmp_path,
+        SHA_A,
+        full,
+        (-10.0, -5.0),
+        STATS,
+        body_mask=body,
+        cut_z_mm=2.5,
+        detector_version=1,
+    )
+    doc = load_doc(tmp_path, SHA_A)
+    assert (doc.masks[0] == full).all()
+    assert doc.body_mask is not None
+    assert (doc.body_mask == body).all()
+    assert doc.cut_z_mm == 2.5
+    assert doc.detector_version == 1
+
+
+def test_body_mask_written_as_model_body_entry(tmp_path):
+    save_doc(
+        tmp_path,
+        SHA_A,
+        checker_mask(),
+        (0.0, 0.0),
+        STATS,
+        body_mask=body_mask(),
+        cut_z_mm=2.5,
+        detector_version=1,
+    )
+    raw = json.loads(doc_path(tmp_path, SHA_A).read_text(encoding="utf-8"))
+    kinds = [fp["kind"] for fp in raw["footprints"]]
+    assert kinds == ["full_shadow", "model_body"]
+    assert raw["footprints"][1]["z_band_mm"] == [2.5, None]
+
+
+def test_doc_without_body_has_none_body_fields(tmp_path):
+    save_doc(tmp_path, SHA_A, checker_mask(), (0.0, 0.0), STATS)  # no body
+    doc = load_doc(tmp_path, SHA_A)
+    assert doc.body_mask is None
+    assert doc.cut_z_mm is None
+    assert doc.detector_version is None
+
+
+def test_v1_doc_reads_with_no_body(tmp_path):
+    """A schema-1 doc (e.g. from stl_curator) loads; body is absent."""
+    save_doc(tmp_path, SHA_A, checker_mask(), (0.0, 0.0), STATS)
+    p = doc_path(tmp_path, SHA_A)
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    raw["schema_version"] = 1
+    raw["footprints"] = [raw["footprints"][0]]  # full_shadow only
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    assert has_current_doc(tmp_path, SHA_A) is True
+    doc = load_doc(tmp_path, SHA_A)
+    assert doc.body_mask is None
+    assert len(doc.masks) == 1
