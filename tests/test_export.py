@@ -8,7 +8,6 @@ from plate_packer.export import (
     _stl_records,
     _transform_triangles,
     export_plates,
-    occupancy_from_full,
     placement_transform,
     read_stl_triangles,
     verify_plate,
@@ -305,27 +304,3 @@ def test_read_stl_triangles_truncated_binary_is_not_misparsed(tmp_path):
     except Exception:  # the fallback loader may raise; that is acceptable
         return
     assert len(tris) == 0
-
-
-@pytest.mark.parametrize("angle", [0.0, 30.0, 90.0, 137.0], ids=lambda a: f"deg{a:g}")
-def test_occupancy_from_full_covers_body_placement(angle):
-    """A full mask (>= body) placed via occupancy_from_full must cover the body
-    placed the normal way at the same anchor, for any rotation."""
-    full = np.zeros((30, 30), np.uint8)
-    full[5:25, 5:25] = 1  # full footprint
-    body = np.zeros((30, 30), np.uint8)
-    body[10:25, 10:25] = 1  # body = subset (base cleared), SAME canvas
-
-    body_rot, body_aff = rotate_mask(body, angle)
-    full_rot, full_aff = rotate_mask(full, angle)
-
-    row, col = 40, 50
-    occ_body = np.zeros((120, 120), np.uint8)
-    occ_body[row : row + body_rot.shape[0], col : col + body_rot.shape[1]] |= body_rot
-
-    occ_full = np.zeros((120, 120), np.uint8)
-    occupancy_from_full(occ_full, full_rot, body_aff, full_aff, row, col)
-
-    # full-shadow occupancy is a superset of the body placement (alignment holds)
-    assert (occ_body.astype(bool) & ~occ_full.astype(bool)).sum() == 0
-    assert occ_full.sum() >= occ_body.sum()

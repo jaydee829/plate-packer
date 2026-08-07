@@ -155,29 +155,6 @@ def _rasterize_plate_shadow(mesh, working_res_mm, plate_mm, tol_px):
     return canvas, int(oob.sum())
 
 
-def occupancy_from_full(
-    occ: np.ndarray,
-    full_rot: np.ndarray,
-    body_aff: np.ndarray,
-    full_aff: np.ndarray,
-    row: int,
-    col: int,
-) -> None:
-    """OR a rotated full-shadow mask into `occ` at the world position of a body
-    placed at (row, col). The body and full prepared masks share one un-cropped
-    rotation canvas (identical extraction canvas -> downsample -> dilation), so
-    the full anchor is the body anchor plus the affines' crop-translation
-    difference. Clipped to occ bounds; mutates occ in place."""
-    fr = round(row + (body_aff[1, 2] - full_aff[1, 2]))
-    fc = round(col + (body_aff[0, 2] - full_aff[0, 2]))
-    h, w = full_rot.shape
-    r0, c0 = max(fr, 0), max(fc, 0)
-    r1, c1 = min(fr + h, occ.shape[0]), min(fc + w, occ.shape[1])
-    if r1 <= r0 or c1 <= c0:
-        return
-    occ[r0:r1, c0:c1] |= full_rot[r0 - fr : r1 - fr, c0 - fc : c1 - fc]
-
-
 def verify_plate(plate_mesh, occupancy, working_res_mm, plate_mm, spacing_mm) -> int:
     """Merged-shadow self-check: count actual-shadow pixels outside the
     predicted occupancy (subset assertion -- occupancy legitimately includes

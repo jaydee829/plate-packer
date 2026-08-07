@@ -17,7 +17,7 @@ from plate_packer.export import (
     read_stl_triangles,
     verify_plate,
 )
-from plate_packer.footprint import extract_footprint
+from plate_packer.footprint import DETECTOR_VERSION, extract_footprints
 from plate_packer.footprint_io import (
     CANONICAL_RES_MM,
     file_sha256,
@@ -27,7 +27,7 @@ from plate_packer.footprint_io import (
 )
 from plate_packer.improve import improve
 from plate_packer.loading import prepare_mask
-from plate_packer.packer import CHOOSERS, _fits, pack, rotate_mask, seed_order
+from plate_packer.packer import CHOOSERS, _fits, pack, rotate_mask, rotate_pair, seed_order
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -79,6 +79,7 @@ def footprints(
 ):
     """Generate footprint cache documents for STL/OBJ files."""
     out_dir = footprints_dir or load_config(None).footprints_dir
+    cap = load_config(None).support_cut_cap_mm
     files = _discover(paths)
     if not files:
         typer.echo("no STL/OBJ files found")
@@ -91,10 +92,24 @@ def footprints(
             if not force and has_current_doc(out_dir, sha):
                 skipped += 1
                 continue
-            mask, origin, stats = extract_footprint(load_piece_mesh(f), CANONICAL_RES_MM)
-            save_doc(out_dir, sha, mask, origin, stats, res_mm_per_px=CANONICAL_RES_MM)
+            full, body, origin, cut, stats = extract_footprints(
+                load_piece_mesh(f), CANONICAL_RES_MM, cap
+            )
+            save_doc(
+                out_dir,
+                sha,
+                full,
+                origin,
+                stats,
+                res_mm_per_px=CANONICAL_RES_MM,
+                body_mask=body,
+                cut_z_mm=cut,
+                detector_version=DETECTOR_VERSION,
+            )
             written += 1
-            typer.echo(f"  {f.name}: ok ({stats['mask_px'][1]}x{stats['mask_px'][0]}px)")
+            typer.echo(
+                f"  {f.name}: ok ({stats['mask_px'][1]}x{stats['mask_px'][0]}px, cut={cut:.2f}mm)"
+            )
         except Exception as e:  # per-file failures never halt the batch
             failures.append((f, str(e)))
             typer.echo(f"  {f.name}: FAILED ({e})")
@@ -160,15 +175,49 @@ def pack_command(
     errors: list[tuple[Path, str]] = []
     piece_files: list[Path] = []
     masks: list[np.ndarray] = []
+    full_masks: list[np.ndarray] = []
     origins: list[tuple[float, float]] = []
     areas: list[int] = []
     for f in files:
         try:
             sha = file_sha256(f)
             if force or not has_current_doc(fp_dir, sha):
-                mask, origin, stats = extract_footprint(load_piece_mesh(f), CANONICAL_RES_MM)
-                save_doc(fp_dir, sha, mask, origin, stats, res_mm_per_px=CANONICAL_RES_MM)
+                full, body, origin, cut, stats = extract_footprints(
+                    load_piece_mesh(f), CANONICAL_RES_MM, cfg.support_cut_cap_mm
+                )
+                save_doc(
+                    fp_dir,
+                    sha,
+                    full,
+                    origin,
+                    stats,
+                    res_mm_per_px=CANONICAL_RES_MM,
+                    body_mask=body,
+                    cut_z_mm=cut,
+                    detector_version=DETECTOR_VERSION,
+                )
             doc = load_doc(fp_dir, sha)
+            if cfg.support_aware and (
+                doc.body_mask is None or doc.detector_version != DETECTOR_VERSION
+            ):
+                try:
+                    full, body, origin, cut, stats = extract_footprints(
+                        load_piece_mesh(f), CANONICAL_RES_MM, cfg.support_cut_cap_mm
+                    )
+                    save_doc(
+                        fp_dir,
+                        sha,
+                        full,
+                        origin,
+                        stats,
+                        res_mm_per_px=CANONICAL_RES_MM,
+                        body_mask=body,
+                        cut_z_mm=cut,
+                        detector_version=DETECTOR_VERSION,
+                    )
+                    doc = load_doc(fp_dir, sha)
+                except Exception as e:
+                    typer.echo(f"  {f.name}: body-mask extraction failed ({e}); using full shadow")
             if doc.z_height_mm > cfg.build_height_mm:
                 errors.append(
                     (
@@ -178,22 +227,31 @@ def pack_command(
                     )
                 )
                 continue
-            mask, origin = prepare_mask(doc, cfg.spacing_mm, res)
+            use_body = cfg.support_aware and doc.body_mask is not None
+            pack_kind = "model_body" if use_body else "full_shadow"
+            mask, origin = prepare_mask(doc, cfg.spacing_mm, res, kind=pack_kind)
+            if use_body:
+                full_mask, _ = prepare_mask(doc, cfg.spacing_mm, res, kind="full_shadow")
+            else:
+                full_mask = mask
             # Same predicate pack()/improve() would run with validate=True; call
             # it directly so the two never drift (both later run validate=False).
+            # Validate against the FULL mask -- it, not the body, must clear an
+            # empty plate (the body may be smaller/off-center after base removal).
             cand = angle_candidates(
                 mask,
                 cap=cfg.angle_cap,
                 min_edge_frac=cfg.min_edge_frac,
                 safety_grid=cfg.safety_grid,
             )
-            fits = any(_fits(plate_mask, rotate_mask(mask, a)[0]) for a in cand)
+            fits = any(_fits(plate_mask, rotate_mask(full_mask, a)[0]) for a in cand)
             if not fits:
                 errors.append((f, "does not fit an empty plate at any rotation"))
                 continue
-            undilated, _ = prepare_mask(doc, 0.0, res)
+            undilated, _ = prepare_mask(doc, 0.0, res, kind=pack_kind)
             piece_files.append(f)
             masks.append(mask)
+            full_masks.append(full_mask)
             origins.append(origin)
             areas.append(int(undilated.sum()))
         except Exception as e:
@@ -228,6 +286,7 @@ def pack_command(
             safety_grid=cfg.safety_grid,
             edge_contact_weight=cfg.edge_contact_weight,
             ordering=cfg.ordering,
+            boundary_pieces=full_masks if cfg.support_aware else None,
             validate=False,
             on_improve=lambda evals, plates, fit: typer.echo(
                 f"  improve: eval {evals}: {plates} plate(s), fitness {fit:.4f}"
@@ -238,6 +297,32 @@ def pack_command(
             f"improvement: {res_improve.evaluations} evaluations, "
             f"{res_improve.improvements} improvements, "
             f"fitness {res_improve.fitness_initial:.4f} -> {res_improve.fitness_final:.4f}"
+        )
+    elif cfg.support_aware:
+        prerot, bound = [], []
+        for i in range(len(masks)):
+            cand = angle_candidates(
+                masks[i],
+                cap=cfg.angle_cap,
+                min_edge_frac=cfg.min_edge_frac,
+                safety_grid=cfg.safety_grid,
+            )
+            b, fd = {}, {}
+            for a in cand:
+                fr, br, _ = rotate_pair(full_masks[i], masks[i], a)
+                fd[a], b[a] = fr, br
+            prerot.append(b)
+            bound.append(fd)
+        placements = pack(
+            masks,
+            plate_shape,
+            plate_mask=plate_mask,
+            choose=choose,
+            prerotated=prerot,
+            boundary=bound,
+            order=seed_order(masks, cfg.ordering),
+            validate=False,
+            edge_weight=cfg.edge_contact_weight,
         )
     else:
         prerot = [
@@ -268,10 +353,14 @@ def pack_command(
     if improve_line:
         typer.echo(improve_line)
 
-    # Stage 4: exact transforms + export.
+    # Stage 4: exact transforms + export. When support-aware, the placement
+    # anchor (row, col) lives in the FULL-shadow frame (rotate_pair's shared
+    # canvas), so the transform is derived from the full mask, not the body
+    # used for packing; off support-aware, full_masks[i] is masks[i].
     transforms = []
     for pl in placements:
-        _, aff = rotate_mask(masks[pl.piece], pl.angle)
+        ref = full_masks[pl.piece] if cfg.support_aware else masks[pl.piece]
+        _, aff = rotate_mask(ref, pl.angle)
         transforms.append(
             placement_transform(origins[pl.piece], aff, pl.row, pl.col, res, cfg.plate_mm)
         )
@@ -288,7 +377,8 @@ def pack_command(
         lines.append(f"{path.name}: {len(on_plate)} pieces, {pct:.1%} occupied")
         for pl in on_plate:
             t4 = transforms[pl.piece]
-            rm, _ = rotate_mask(masks[pl.piece], pl.angle)
+            ref = full_masks[pl.piece] if cfg.support_aware else masks[pl.piece]
+            rm, _ = rotate_mask(ref, pl.angle)
             rr, cc = np.nonzero(rm)
             cx = (pl.col + cc.mean()) * res - cfg.plate_mm[0] / 2
             cy = (pl.row + rr.mean()) * res - cfg.plate_mm[1] / 2
@@ -306,11 +396,12 @@ def pack_command(
     if not no_verify:
         occs = [np.zeros(plate_shape, np.uint8) for _ in plate_files]
         for pl in placements:
-            rm, _ = rotate_mask(masks[pl.piece], pl.angle)
+            ref = full_masks[pl.piece] if cfg.support_aware else masks[pl.piece]
+            rm, _ = rotate_mask(ref, pl.angle)
             occs[pl.plate][pl.row : pl.row + rm.shape[0], pl.col : pl.col + rm.shape[1]] |= rm
         # Free everything the verify loop doesn't need; the reloaded plate
         # triangle soups are the peak allocation of the whole run.
-        del masks
+        del masks, full_masks
         gc.collect()
         failed = 0
         for path, occ in zip(plate_files, occs, strict=True):
