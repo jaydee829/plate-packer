@@ -206,6 +206,55 @@ def test_pack_improvement_summary_in_report(tmp_path, monkeypatch):
     assert "evaluations" in report
 
 
+def test_pack_from_file_packs_listed_files(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    sel = tmp_path / "sel.txt"
+    sel.write_text("models/box0.stl\nmodels/box1.stl\n", encoding="utf-8")
+    result = runner.invoke(app, ["pack", "--from-file", str(sel)])
+    assert result.exit_code == 0, result.output
+    report = (tmp_path / "plates" / "report.txt").read_text(encoding="utf-8")
+    assert "box0.stl" in report and "box1.stl" in report
+
+
+def test_pack_from_file_ignores_blanks_and_comments(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    sel = tmp_path / "sel.txt"
+    sel.write_text(
+        "# selection\n\nmodels/box0.stl\n   \n# trailing comment\nmodels/box1.stl\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["pack", "--from-file", str(sel)])
+    assert result.exit_code == 0, result.output
+    report = (tmp_path / "plates" / "report.txt").read_text(encoding="utf-8")
+    assert "box0.stl" in report and "box1.stl" in report
+
+
+def test_pack_from_file_unions_with_positional_paths(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    sel = tmp_path / "sel.txt"
+    sel.write_text("models/box1.stl\n", encoding="utf-8")
+    result = runner.invoke(app, ["pack", "models/box0.stl", "--from-file", str(sel)])
+    assert result.exit_code == 0, result.output
+    report = (tmp_path / "plates" / "report.txt").read_text(encoding="utf-8")
+    assert "box0.stl" in report and "box1.stl" in report
+
+
+def test_pack_from_file_missing_entry_errors(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    sel = tmp_path / "sel.txt"
+    sel.write_text("models/box0.stl\nmodels/ghost.stl\n", encoding="utf-8")
+    result = runner.invoke(app, ["pack", "--from-file", str(sel)])
+    assert result.exit_code != 0
+    assert "ghost.stl" in result.output
+
+
+def test_pack_from_file_missing_list_file_errors(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", "--from-file", str(tmp_path / "nope.txt")])
+    assert result.exit_code != 0
+    assert "nope.txt" in result.output
+
+
 def test_pack_cli_greedy_uses_shape_aware_angles(tmp_path, monkeypatch):
     # A budget-0 pack still succeeds end-to-end (report written, verify ok) with
     # the shape-aware greedy path.

@@ -51,6 +51,24 @@ def _discover(paths: list[Path]) -> list[Path]:
     return list(dict.fromkeys(f.resolve() for f in files))
 
 
+def _read_selection(from_file: Path) -> list[Path]:
+    """Read newline-separated input paths from a list file (blank lines and
+    #-comment lines ignored). Paths resolve relative to the current directory.
+    Raises typer.BadParameter if the list file or any listed path is missing."""
+    if not from_file.exists():
+        raise typer.BadParameter(f"--from-file: {from_file} does not exist")
+    entries = [
+        Path(s)
+        for line in from_file.read_text(encoding="utf-8").splitlines()
+        if (s := line.strip()) and not s.startswith("#")
+    ]
+    missing = [p for p in entries if not p.exists()]
+    if missing:
+        listed = ", ".join(str(p) for p in missing)
+        raise typer.BadParameter(f"--from-file lists missing path(s): {listed}")
+    return entries
+
+
 @app.command()
 def footprints(
     paths: list[Path] = typer.Argument(..., exists=True),  # noqa: B008
@@ -87,10 +105,16 @@ def footprints(
 
 @app.command("pack")
 def pack_command(
-    paths: list[Path] = typer.Argument(..., exists=True),  # noqa: B008
+    paths: list[Path] = typer.Argument(None, exists=True),  # noqa: B008
     config: Path = typer.Option(None, help="config TOML (default ./config.toml)"),  # noqa: B008
     out: Path = typer.Option(None, help="output dir (default: config output_dir)"),  # noqa: B008
     footprints_dir: Path = typer.Option(None, help="cache dir (default: config)"),  # noqa: B008
+    from_file: Path = typer.Option(  # noqa: B008
+        None,
+        "--from-file",
+        help="read newline-separated input paths from a file "
+        "(# comments and blank lines ignored); unioned with PATHS",
+    ),
     no_verify: bool = typer.Option(False, "--no-verify", help="skip merged-shadow self-check"),
     force: bool = typer.Option(False, help="regenerate footprint docs even if current"),
     budget: float = typer.Option(
@@ -117,7 +141,10 @@ def pack_command(
     fp_dir = footprints_dir or cfg.footprints_dir
     out_dir = out or cfg.output_dir
     res = cfg.working_res_mm
-    files = _discover(paths)
+    inputs = list(paths) if paths else []
+    if from_file is not None:
+        inputs += _read_selection(from_file)
+    files = _discover(inputs)
     if not files:
         typer.echo("no STL/OBJ files found")
         return
