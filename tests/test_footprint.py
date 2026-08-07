@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from plate_packer.footprint import extract_footprint
+from plate_packer.footprint import BAND_MM, detect_base_cut, extract_footprint
 
 RES = 0.1
 
@@ -69,3 +69,39 @@ def test_stacked_boxes_shadow_unions():
     b.apply_translation([0, 0, 5])
     mask, _origin, _stats = extract_footprint(trimesh.util.concatenate([a, b]), RES)
     assert mask.mean() > 0.97
+
+
+def _box(xy, z_lo, z_hi):
+    """Axis-aligned box with XY extents `xy`, spanning Z [z_lo, z_hi]."""
+    b = trimesh.creation.box(extents=(xy[0], xy[1], z_hi - z_lo))
+    b.apply_translation([0, 0, (z_lo + z_hi) / 2])
+    return b
+
+
+def _tris(*boxes):
+    return trimesh.util.concatenate(list(boxes)).triangles
+
+
+@pytest.mark.parametrize(
+    ("tris", "expected"),
+    [
+        pytest.param(_tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)), 2.0, id="raft-then-pillar"),
+        pytest.param(_tris(_box((1, 1), 0, 12)), 0.0, id="pillar-only-no-base"),
+        pytest.param(_tris(_box((20, 20), 0, 12)), 0.0, id="wide-solid-no-drop"),
+        pytest.param(
+            _tris(_box((20, 20), 0, 8), _box((1, 1), 8, 18)), 0.0, id="base-past-cap-window"
+        ),
+        pytest.param(
+            _tris(_box((2, 2), 0, 0.5), _box((1, 1), 0.5, 8), _box((20, 20), 8, 10)),
+            0.0,
+            id="tiny-foot-below-min-base-frac",
+        ),
+    ],
+)
+def test_detect_base_cut(tris, expected):
+    assert detect_base_cut(tris, 0.1, 5.0) == pytest.approx(expected, abs=BAND_MM)
+
+
+def test_detect_base_cut_zero_cap_returns_zero():
+    tris = _tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12))
+    assert detect_base_cut(tris, 0.1, 0.0) == 0.0
