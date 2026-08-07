@@ -1439,9 +1439,13 @@ git commit -m "feat: thread boundary (full-shadow) masks through improve"
    `doc.detector_version != DETECTOR_VERSION`), re-extract that piece (fallback to
    full shadow, logged, if the STL read raises). Prepare `mask = prepare_mask(doc,
    spacing, res, kind="model_body")` and `full = prepare_mask(doc, spacing, res,
-   kind="full_shadow")` when using body; else both are the full mask. Validate the
-   FULL mask fits (`angle_candidates(full)` + `_fits`). Pack passes `boundary` =
-   per-piece full variants when support-aware.
+   kind="full_shadow")` when using body; else both are the full mask. Validate by
+   rotating the **full** mask through the **body**-derived `angle_candidates(mask)`
+   and `_fits` (the candidate angles come from the body hull, matching `improve`'s
+   `piece_angles`, so budget==0 and budget>0 try the same orientations; body and
+   full share the outer hull for real pieces, and `safety_grid` gives uniform
+   coverage regardless). Pack passes `boundary` = per-piece full variants when
+   support-aware.
 3. Placement→transform and verify use `rotate_mask(full, angle)` at `(row, col)`
    (the anchor is already in the full frame). Verify ORs `rotate_mask(full,
    angle)[0]` into the plate occupancy at `(row, col)` — plain placement. Off path
@@ -1560,9 +1564,9 @@ Follow the interface/behavior list above. Concretely in `src/plate_packer/cli.py
 - Build per-piece boundary variants only when support-aware: for the budget>0
   path, `improve(masks, ..., boundary_pieces=full_masks)`; for `--budget 0`, build
   `prerot` (body) and `bound` (full) via `rotate_pair(full_masks[i], masks[i], a)`
-  for each `a in angle_candidates(full_masks[i], ...)` and call `pack(masks, ...,
-  prerotated=prerot, boundary=bound, ...)`. When off, keep today's `prerot`/`pack`
-  with `boundary=None`.
+  for each `a in angle_candidates(masks[i], ...)` (body-derived, matching
+  `improve`) and call `pack(masks, ..., prerotated=prerot, boundary=bound, ...)`.
+  When off, keep today's `prerot`/`pack` with `boundary=None`.
 - Transforms: `_, aff = rotate_mask(full_masks[pl.piece] if cfg.support_aware else masks[pl.piece], pl.angle)`.
 - Verify: build each plate occupancy by ORing `rotate_mask(full_masks[pl.piece] if
   cfg.support_aware else masks[pl.piece], pl.angle)[0]` at `(pl.row, pl.col)`.
