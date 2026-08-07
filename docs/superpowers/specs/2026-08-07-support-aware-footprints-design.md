@@ -61,36 +61,41 @@ alone — ADR-009 holds.
 ## 2. Auto-detection: the area cliff (`footprint.py`)
 
 Detect the cut by walking cross-sectional **occupied area** upward from the
-model's base:
+model's base. **The safety cap is the search window** — we only look for the
+cliff within `[z0, z0 + support_cut_cap_mm]`, never scan the whole model and
+never cut deeper than the cap:
 
-1. Let `z0 = min triangle Z`, `z1 = max triangle Z`. Slice `[z0, z1]` into bands
-   of height `BAND_MM` (module constant, initial `0.25`).
-2. For each band, rasterize the XY shadow of triangles whose Z-interval overlaps
-   the band, and record the occupied pixel **area** `A(z)`.
-3. A raft / support base is wide; the support pillars above it are thin, so `A`
-   drops off a **cliff** at the base's top surface. Scan bands upward from `z0`,
-   tracking the running peak `A_peak`. The cut is the top of the first band whose
-   `A(z) < CLIFF_FRAC × A_peak` — *provided* `A_peak ≥ MIN_BASE_FRAC × A_max`,
-   where `A_max` is the peak area over *all* bands (the model's widest
-   cross-section). No qualifying cliff → cut = 0. Initial `CLIFF_FRAC = 0.7`
+1. Let `z0 = min triangle Z`, `z1 = max triangle Z`. If `z1 − z0 ≤ BAND_MM` →
+   cut = 0. Let `A_full` = the full-shadow occupied-pixel area.
+2. Tile `[z0, min(z0 + support_cut_cap_mm, z1)]` into bands of height `BAND_MM`
+   (module constant, initial `0.25`). For each band, rasterize the XY shadow of
+   the triangles crossing it (max Z `>` band bottom **and** min Z `<` band top) on
+   the *full-shadow canvas/origin*, and record the occupied pixel area `A`.
+3. A raft / support base is wide; the pillars above it are thin, so `A` drops off
+   a **cliff** at the base's top surface. Scan bands bottom-up, tracking the
+   running peak `A_peak`. The cut is the **bottom of the first band** whose
+   `A < CLIFF_FRAC × A_peak`, *provided* `A_peak ≥ MIN_BASE_FRAC × A_full`. No
+   qualifying drop inside the window → cut = 0. Initial `CLIFF_FRAC = 0.7`
    (start **sensitive** — a ~30% drop already triggers a cut, so Lychee's shallow
    thin-strip cliffs are caught; walk it back down toward 0.5 once functionality
    is proven, re-packing to see how aggressive we can safely go).
-4. **Clamp** the cut to `[0, support_cut_cap_mm]`, then set `model_body` from
-   triangles with max Z `> cut_z` (§1).
+4. `model_body` = shadow of triangles with max Z `> z0 + cut` (§1); when
+   cut = 0, `model_body` is a copy of `full_shadow`.
 
 Fail-safe by construction — every ambiguous case degrades to "no cut," i.e.
 `model_body == full_shadow`, which is exactly today's behavior:
 
 - **No base** (supports printed straight to the plate) → no wide base band, no
   cliff → cut = 0.
-- **Wide-bodied model** (bust on a broad plinth; area never drops) → no cliff →
-  cut = 0.
-- **Base band too small to be a raft** (`A_peak` below `MIN_BASE_FRAC × A_max`,
+- **Wide-bodied model** (bust on a broad plinth; area never drops in the window)
+  → no cliff → cut = 0.
+- **Base band too small to be a raft** (`A_peak` below `MIN_BASE_FRAC × A_full`,
   initial `MIN_BASE_FRAC = 0.15`) → treated as "no base" → cut = 0.
-- **Tall solid base that reads as a raft** → cliff detected deep → cap clamps it.
-  Bounded worst case: ≤ `support_cut_cap_mm` of a genuine base may fuse; the
-  per-piece disable escape hatch (deferred, §4) covers the outlier.
+- **Tall solid base** (base persists past the cap window) → no sharp drop within
+  the window → cut = 0. No benefit for that piece, and **nothing fuses** — the
+  safe outcome. (The only residual risk is a *real* model with a genuine sharp
+  area drop inside its first `support_cut_cap_mm` and a base wide enough to pass
+  `MIN_BASE_FRAC`; bounded by the cap, covered by the deferred per-piece disable.)
 
 `BAND_MM`, `CLIFF_FRAC`, and `MIN_BASE_FRAC` are **module constants**, not config
 — they are detector internals, tuned against real STLs and pinned by tests. Only
@@ -122,8 +127,17 @@ non-overlap — precisely the freedom this feature introduces. Both masks are
 cached, so `full_shadow` is on hand at verify time regardless of the packing
 mask.
 
-When `support_aware` is off, packing and verification both use `full_shadow`, so
-behavior is unchanged.
+Placing `full_shadow` at the *same world location* as the packed `model_body`
+needs no new coordinate math: the two prepared masks share an identical
+un-cropped rotation canvas (same extraction canvas → same downsample → same
+dilation), so a piece placed at body anchor `(row, col)` has its full-shadow
+anchor at `row + (aff_body[1,2] − aff_full[1,2])`, `col + (aff_body[0,2] −
+aff_full[0,2])`, where `aff_*` are the 2×3 affines `rotate_mask` returns for the
+two masks at the piece's angle. Pure integer placement (clipped to the plate),
+reusing `rotate_mask` — no resampling.
+
+When `support_aware` is off, packing and verification both use `full_shadow` by
+the existing code path, so behavior is byte-identical.
 
 ## 4. Config surface & defaults (`config.py`)
 
@@ -156,11 +170,11 @@ Bump `SCHEMA_VERSION` 1 → 2:
 
 - The `footprints` list gains a second entry, `kind: "model_body"`, with
   `z_band_mm: [cut_z_mm, null]` and its own PNG.
-- Doc-level detection metadata: `cut_z_mm`, `cliff_z_mm`, `cap_mm`,
-  `detector_version` (an int bumped when detector constants change, so a policy
-  change invalidates stale docs).
-- `FootprintDoc` carries the masks keyed by `kind` (not a bare list) plus the
-  metadata, so consumers select by kind rather than index.
+- Doc-level detection metadata: `cut_z_mm`, `cap_mm`, `detector_version` (an int
+  bumped when detector constants change — see the re-extraction rule below).
+- `FootprintDoc` keeps `masks` = `[full_shadow]` (unchanged for existing
+  consumers) and gains optional `body_mask`, `cut_z_mm`, `detector_version`
+  fields, populated from the `model_body` entry when present.
 
 **Reads accept both v1 and v2.** plate_packer's own extraction always writes v2.
 A v1 doc — e.g. one written by stl_curator, which does not know about body
@@ -170,10 +184,14 @@ Re-extraction is scoped so the upgrade cost falls only on opt-in users, once:
 
 - `has_current_doc` still treats **both v1 and v2 as current** for the *default*
   path, so support-off users never re-extract and see no behavior change.
-- When `support_aware` is on, pack additionally requires a body mask: if the
-  loaded doc lacks `model_body` (a v1 doc, or a curator-written v2 without it),
-  that piece is re-extracted to v2 so the body mask exists. A piece whose STL is
-  unavailable at pack time falls back to `full_shadow` and logs it.
+- When `support_aware` is on, pack additionally requires a *current* body mask:
+  if the loaded doc lacks `model_body` (a v1 doc, or a curator-written v2 without
+  it) **or** its `detector_version` differs from the code's current
+  `DETECTOR_VERSION`, that piece is re-extracted to v2 so the body mask exists and
+  is up to date. Bumping `DETECTOR_VERSION` when you retune `CLIFF_FRAC` therefore
+  auto-invalidates stale body masks on the next support-aware run — no `--force`
+  needed. A piece whose STL is unavailable at pack time falls back to
+  `full_shadow` and logs it.
 
 This gives opt-in users immediate benefit while imposing nothing on everyone
 else, and it self-heals if stl_curator later overwrites a doc with v1 (content is
@@ -192,9 +210,9 @@ Parametrized, atomic — one named case per input, per the global rule.
 - Slab raft + thin pillars → cut at the raft top.
 - Skate base (thin strips at z=0) + pillars → cut just above the strips.
 - No base (pillars to plate) → cut = 0.
-- Wide body, area never drops → cut = 0.
-- Base band below `MIN_BASE_FRAC` → cut = 0.
-- Tall solid base, cliff beyond cap → cut = `support_cut_cap_mm`.
+- Wide body, area never drops in the window → cut = 0.
+- Base band below `MIN_BASE_FRAC × A_full` → cut = 0.
+- Tall solid base persisting past the cap window → cut = 0 (no drop in window).
 
 **Unit — masks & doc:**
 - `model_body ⊆ full_shadow`, identical origin/shape, base pixels cleared.
