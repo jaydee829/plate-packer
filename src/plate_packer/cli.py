@@ -96,7 +96,8 @@ def pack_command(
     budget: float = typer.Option(
         None,
         "--budget",
-        help="improvement budget in seconds (0 = plain greedy; default: config)",
+        help="coarse-search budget in seconds (0 = plain greedy; default: config). "
+        "Total runtime also includes up to (beam+1) unbudgeted fine packs after.",
     ),
     seed: int = typer.Option(None, help="improvement search RNG seed (default: config)"),
     coarse_res: float = typer.Option(

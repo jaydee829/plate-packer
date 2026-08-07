@@ -267,6 +267,12 @@ contact (0.4785) — but only after two corrections and a default change:
    (with `angle_cap=12`, safety_grid=16 → ~8 distinct mod-180 uniform angles
    unioned with shape-aware, capped to 12). This partly re-opens the ADR-011
    "contact vs bottom-left" question: contact only wins with enough rotations.
+   **CAVEAT (2026-08-07, review round 2): this "shape-aware under-delivers"
+   conclusion was CONFOUNDED by a bug** — `angle_candidates` emitted the mirror
+   angle, so the shape-aware angles were generically *wrong* (bugs.md). With that
+   fixed, shape-aware angles may now contribute meaningfully and `safety_grid`
+   might be reducible. **Re-benchmark before trusting the default-16 value** and
+   re-assess whether shape-aware angles earn their keep vs a pure uniform grid.
 2. **The fine stage lost a plate by re-packing instead of realizing the coarse
    layout** (coarse fit 4, fine re-pack spilled to 5). Fixed: the fine stage now
    also realizes the coarse layout (`_scale_placements`, anchors × factor —

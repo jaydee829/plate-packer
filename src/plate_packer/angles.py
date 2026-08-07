@@ -26,6 +26,8 @@ def angle_candidates(
     """Rotation angles (deg, in [0,180)) that lay long hull edges parallel to a
     plate axis. 0.0 is always included; circle-like hulls collapse to [0.0]
     (plus any safety_grid angles). Sorted most-compact-first, capped at cap."""
+    if cap < 1:
+        raise ValueError("cap must be >= 1")
     pts = np.argwhere(mask > 0)[:, ::-1].astype(np.int32)  # (x=col, y=row)
     if len(pts) == 0:
         return [0.0]
@@ -44,7 +46,11 @@ def angle_candidates(
         for (dx, dy), length in zip(edges, lengths, strict=True):
             if length < min_edge_frac * perimeter:
                 continue
-            base = (-math.degrees(math.atan2(dy, dx))) % 180
+            # theta that lays edge (dx, dy) parallel to an axis under
+            # rotate_mask's convention (x'=cos*x+sin*y, y'=-sin*x+cos*y):
+            # -dx*sin+dy*cos=0 => theta = atan2(dy, dx). (No negation -- the
+            # mirror sign left generic edges un-aligned; see bugs.md 2026-08-07.)
+            base = math.degrees(math.atan2(dy, dx)) % 180
             angles.add(round(base, 6))
             angles.add(round((base + 90) % 180, 6))
     if safety_grid > 0:

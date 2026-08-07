@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from plate_packer.angles import _analytic_aabb_area, angle_candidates
+from plate_packer.packer import rotate_mask
 
 
 def solid(h, w):
@@ -121,3 +122,28 @@ def test_angle_candidates_keeps_zero_under_small_cap(cap):
 
 def test_angle_candidates_cap_one_tilted_is_zero():
     assert angle_candidates(_tilted_rect(), cap=1) == [0.0]
+
+
+def test_angle_candidates_deskews_generic_tilted_edge():
+    # A long rectangle tilted to a generic (non-axis, non-45deg) orientation: a
+    # shape-aware candidate must actually axis-align it -- rotate_mask by the
+    # best candidate yields a much tighter bbox than leaving it at 0deg.
+    # Regression: the per-edge angle formula had an inverted sign that left
+    # generic hull edges un-aligned (PR #6 review, bugs.md 2026-08-07).
+    base = np.zeros((7, 28), np.uint8)
+    base[1:6, 2:26] = 1
+    tilted, _ = rotate_mask(base, 25.0)
+
+    def bbox_area(a):
+        m, _ = rotate_mask(tilted, a)
+        rr, cc = np.nonzero(m)
+        return (rr.max() - rr.min() + 1) * (cc.max() - cc.min() + 1)
+
+    cands = angle_candidates(tilted)
+    assert min(bbox_area(a) for a in cands) < 0.75 * bbox_area(0.0)
+
+
+@pytest.mark.parametrize("cap", [0, -1], ids=["cap-0", "cap-neg"])
+def test_angle_candidates_rejects_cap_below_one(cap):
+    with pytest.raises(ValueError, match="cap"):
+        angle_candidates(solid(4, 4), cap=cap)

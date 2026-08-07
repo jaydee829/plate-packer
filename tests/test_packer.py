@@ -378,6 +378,20 @@ def test_contact_map_fractional_edge_weight_not_truncated():
     assert half < full  # and stays below full weight
 
 
+@pytest.mark.parametrize(
+    "edge_weight, corner",
+    [(0.1, 0.5), (0.2, 1.0), (0.3, 1.5)],
+    ids=["ew-0.1", "ew-0.2", "ew-0.3"],
+)
+def test_contact_map_preserves_small_fractional_edge_weight(edge_weight, corner):
+    # np.rint would quantize the 5-border-cell corner score to whole numbers
+    # (0.1 -> rint(0.5) -> 0, erasing the knob); rounding to 2 decimals keeps the
+    # fractional border signal (PR #6 review). corner = 5 border cells * weight.
+    plate = np.zeros((4, 4), np.uint8)
+    ring = contact_ring(np.ones((1, 1), np.uint8))
+    assert contact_map(plate, ring, edge_weight)[0, 0] == pytest.approx(corner)
+
+
 # --- difficulty ordering (Task 2, ADR-012) ---
 
 

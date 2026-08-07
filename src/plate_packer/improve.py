@@ -210,6 +210,13 @@ def improve(
     `min_improvement` cumulative coarse-fitness gain) return the best found.
     budget_s=0 returns the fine pack of the difficulty-seed order (no search).
 
+    NOTE: `budget_s` bounds only the COARSE search loop. After it stops, the
+    fine-refinement stage runs up to `beam + 1` full fine-resolution packs (the
+    seed plus each beam survivor), which are NOT budgeted. On large inputs a
+    single fine pack can cost minutes, so total wall-clock is roughly
+    `budget_s + (beam + 1) x fine-pack cost` -- set `budget_s`/`beam` with that
+    in mind for time-boxed runs.
+
     Determinism: the search is deterministic per seed *for a fixed number of
     coarse evaluations* -- each evaluation consumes the shared RNG, so
     identical draw sequences require identical evaluation counts. The stall

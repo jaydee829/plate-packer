@@ -28,8 +28,9 @@ resolution and fine-packing only a small beam of the best orderings.
 - For each hull edge whose length exceeds `min_edge_frac × hull_perimeter`,
   emit the rotation angle that lays that edge parallel to the plate x-axis, plus
   that angle `+ 90°` (so the flat side can seat against the bottom *or* the left
-  border). Angle for an edge with delta `(dx, dy)` is `(-degrees(atan2(dy, dx)))
-  % 180`.
+  border). Angle for an edge with delta `(dx, dy)` is `degrees(atan2(dy, dx))
+  % 180` (corrected 2026-08-07: the original spec/code negated this, which
+  emits the mirror angle and fails to axis-align generic edges — see bugs.md).
 - Deduplicate angles within ~2°, sort ascending by the resulting axis-aligned
   bounding-box area (compact orientations first), cap at `cap`.
 - Circle-like hulls (eccentricity below a threshold, i.e. hull area ≈ its
