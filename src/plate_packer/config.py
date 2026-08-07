@@ -12,7 +12,7 @@ class PackConfig:
     plate_mm: tuple[float, float] = (197.0, 122.0)  # Anycubic Photon Mono X 6K
     build_height_mm: float = 245.0
     working_res_mm: float = 0.1
-    spacing_mm: float = 2.0  # true minimum gap between pieces (ADR-010)
+    spacing_mm: float = 1.0  # true minimum gap between pieces (ADR-010); bump for beefier supports
     edge_margin_mm: float = 0.0
     rotations: int = 8
     footprints_dir: Path = Path("footprints")

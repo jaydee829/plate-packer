@@ -29,7 +29,7 @@ output_dir = "out"
         ("plate_mm", (197.0, 122.0)),
         ("build_height_mm", 245.0),
         ("working_res_mm", 0.1),
-        ("spacing_mm", 2.0),
+        ("spacing_mm", 1.0),
         ("edge_margin_mm", 0.0),
         ("rotations", 8),
         ("footprints_dir", Path("footprints")),
