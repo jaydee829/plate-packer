@@ -235,6 +235,11 @@ def pack_command(
             edge_weight=cfg.edge_contact_weight,
         )
 
+    # Echo the search summary before export so the (expensive) fitness result
+    # is visible even if a downstream export/verify stage fails on a large job.
+    if improve_line:
+        typer.echo(improve_line)
+
     # Stage 4: exact transforms + export.
     transforms = []
     for pl in placements:
