@@ -19,9 +19,11 @@ EXAMPLES = Path("example_stls")
 
 @pytest.mark.skipif(not EXAMPLES.exists(), reason="example_stls junction absent")
 def test_detection_fires_on_real_supports(capsys):
-    stls = sorted(EXAMPLES.rglob("*.stl"))[:8]
+    # Only the pre-supported exports carry rafts; match case-insensitively
+    # ("_Supported" / "_supported" both occur in the corpus).
+    stls = [p for p in sorted(EXAMPLES.rglob("*.stl")) if "_supported" in p.stem.lower()][:8]
     if not stls:
-        pytest.skip("no STL files under example_stls")
+        pytest.skip("no *_supported.stl files under example_stls")
     results = []
     for stl in stls:
         full, body, _origin, cut, _stats = extract_footprints(
@@ -30,7 +32,8 @@ def test_detection_fires_on_real_supports(capsys):
         reduction = 1 - body.sum() / full.sum() if full.sum() else 0.0
         results.append((stl.name, cut, reduction))
     with capsys.disabled():
-        print("\nbase-cut detection on real STLs:")
+        print("\nbase-cut detection on real supported STLs:")
         for name, cut, reduction in results:
             print(f"  {name}: cut={cut:.2f}mm  footprint area -{reduction:.1%}")
     assert any(cut > 0 for _name, cut, _r in results), "detector never fired on real supports"
+    assert any(r > 0.05 for _name, _c, r in results), "no meaningful footprint reduction"
