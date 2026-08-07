@@ -12,6 +12,7 @@ from plate_packer.packer import (
     legal_placement_map,
     pack,
     rotate_mask,
+    rotate_pair,
     seed_order,
 )
 
@@ -424,3 +425,33 @@ def test_seed_order_area_matches_legacy_largest_first():
     assert seed_order(pieces, "area") == sorted(
         range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True
     )
+
+
+# --- shared-canvas rotation (Task 8) ---
+
+
+def test_rotate_pair_degenerate_full_equals_body():
+    full = np.ones((10, 12), np.uint8)
+    fr, br, _aff = rotate_pair(full, full, 37.0)
+    assert br.shape == fr.shape
+    assert (br == fr).all()
+
+
+def test_rotate_pair_angle0_reconstructs_body():
+    full = np.ones((12, 12), np.uint8)
+    body = np.zeros((12, 12), np.uint8)
+    body[2:10, 4:8] = 1  # narrower body, smaller bbox than full
+    fr, br, _aff = rotate_pair(full, body, 0.0)
+    assert (fr == full).all()
+    assert (br == body).all()  # body placed back at its full-frame position
+
+
+@pytest.mark.parametrize("angle", [0.0, 30.0, 90.0, 150.0], ids=lambda a: f"deg{a:g}")
+def test_rotate_pair_body_subset_same_shape(angle):
+    full = np.ones((12, 12), np.uint8)
+    body = full.copy()
+    body[3:9, 3:9] = 0  # interior hole (same bbox as full)
+    fr, br, _aff = rotate_pair(full, body, angle)
+    assert br.shape == fr.shape
+    assert (br & ~fr).sum() == 0  # body_rot is a subset of full_rot
+    assert br.sum() < fr.sum()  # the hole survives

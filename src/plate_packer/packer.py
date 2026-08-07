@@ -236,6 +236,35 @@ def rotate_mask(mask: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndar
     return cropped, m
 
 
+def _paste(dst: np.ndarray, src: np.ndarray, r: int, c: int) -> None:
+    """OR `src` into `dst` at top-left (r, c), clipped to `dst` bounds."""
+    h, w = src.shape
+    r0, c0 = max(r, 0), max(c, 0)
+    r1, c1 = min(r + h, dst.shape[0]), min(c + w, dst.shape[1])
+    if r1 <= r0 or c1 <= c0:
+        return
+    dst[r0:r1, c0:c1] |= src[r0 - r : r1 - r, c0 - c : c1 - c]
+
+
+def rotate_pair(full: np.ndarray, body: np.ndarray, angle_deg: float):
+    """Rotate `full` and `body` (body ⊆ full, same input canvas) onto ONE shared
+    canvas cropped to the full mask's content bbox.
+
+    Returns (full_rot, body_rot, affine): full_rot == rotate_mask(full, ·)[0];
+    body_rot has the same shape, with the body content placed at its position in
+    the full frame; affine is full's 2x3 map (export/verify use it). Because both
+    outputs share shape and anchor, downstream legality/verify need no crop-offset
+    arithmetic. The body's crop origin sits (aff_full - aff_body) below/right of
+    full's, so the body is pasted at that offset."""
+    full_rot, aff_full = rotate_mask(full, angle_deg)
+    body_own, aff_body = rotate_mask(body, angle_deg)
+    dr = round(aff_full[1, 2] - aff_body[1, 2])
+    dc = round(aff_full[0, 2] - aff_body[0, 2])
+    body_rot = np.zeros_like(full_rot)
+    _paste(body_rot, body_own, dr, dc)
+    return full_rot, body_rot, aff_full
+
+
 def bottom_left(legal: np.ndarray, contact: np.ndarray | None = None) -> tuple[int, int] | None:
     """Pick the legal anchor with the lowest row, then lowest column.
 
