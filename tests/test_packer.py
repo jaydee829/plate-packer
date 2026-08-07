@@ -455,3 +455,69 @@ def test_rotate_pair_body_subset_same_shape(angle):
     assert br.shape == fr.shape
     assert (br & ~fr).sum() == 0  # body_rot is a subset of full_rot
     assert br.sum() < fr.sum()  # the hole survives
+
+
+# --- two-mask packing (Task 9) ---
+
+
+def _paired_variants(full, body, angles):
+    """Build (body_variants, full_variants) dicts sharing a canvas per angle."""
+    bvar, fvar = {}, {}
+    for a in angles:
+        fr, br, _ = rotate_pair(full, body, a)
+        fvar[a], bvar[a] = fr, br
+    return bvar, fvar
+
+
+def test_boundary_rafts_may_overlap_same_plate():
+    # full = 20x20 raft; body = central 6-wide column (bodies stay disjoint,
+    # but the wide rafts overlap). Two pieces should share ONE plate.
+    full = np.ones((20, 20), np.uint8)
+    body = np.zeros((20, 20), np.uint8)
+    body[:, 7:13] = 1
+    b, f = _paired_variants(full, body, [0.0])
+    placements = pack([body], (20, 40), prerotated=[b], boundary=[f], order=[0], validate=False)
+    # pack a second identical piece by passing two
+    placements = pack(
+        [body, body],
+        (20, 40),
+        prerotated=[b, b],
+        boundary=[f, f],
+        order=[0, 1],
+        validate=False,
+    )
+    assert max(p.plate for p in placements) == 0  # both on plate 0
+
+
+def test_boundary_full_kept_on_plate():
+    # A piece whose body would fit flush at the right edge but whose full shadow
+    # (same shared shape, wider content) must stay within the plate: with a
+    # bordered plate the full may not overlap the border.
+    full = np.ones((10, 10), np.uint8)
+    body = np.zeros((10, 10), np.uint8)
+    body[:, :4] = 1  # body content only on the left of the shared canvas
+    b, f = _paired_variants(full, body, [0.0])
+    border = np.zeros((10, 30), np.uint8)
+    border[:, :2] = border[:, -2:] = 1  # 2px dead margins left/right
+    placements = pack(
+        [body],
+        (10, 30),
+        plate_mask=border,
+        prerotated=[b],
+        boundary=[f],
+        order=[0],
+        validate=False,
+    )
+    (pl,) = placements
+    # full (all 10 cols occupied) must sit clear of both 2px borders
+    assert pl.col >= 2 and pl.col + 10 <= 28
+
+
+def test_boundary_empty_plate_fit_uses_full():
+    # body fits a tiny plate but the full shadow does not -> rejected.
+    full = np.ones((10, 10), np.uint8)
+    body = np.zeros((10, 10), np.uint8)
+    body[:4, :4] = 1
+    b, f = _paired_variants(full, body, [0.0])
+    with pytest.raises(ValueError, match="does not fit"):
+        pack([body], (6, 6), prerotated=[b], boundary=[f], order=[0], validate=True)
