@@ -30,6 +30,7 @@ def pack(
     prerotated=None,
     order=None,
     validate=True,
+    edge_weight=1.0,
 ):
     """Greedy-pack piece masks onto plates; spill to a new plate when full.
 
@@ -37,6 +38,7 @@ def pack(
     prerotated (list of {angle: mask}) skips per-call rotation; order
     overrides the largest-area-first insertion order; validate=False skips
     the every-piece-fits-an-empty-plate check (improve() validates once).
+    edge_weight scales the plate-border contact score (see contact_map).
     Raises ValueError if a piece cannot fit an empty plate at any rotation.
     """
     choose = choose or contact_first
@@ -63,14 +65,14 @@ def pack(
         target = plate_idx = None
         piece_rings = rings[i] if rings is not None else None
         for idx, occupancy in enumerate(plates):
-            target = _best_spot(occupancy, prerotated[i], piece_rings, choose)
+            target = _best_spot(occupancy, prerotated[i], piece_rings, choose, edge_weight)
             if target:
                 plate_idx = idx
                 break
         if target is None:
             plates.append(empty.copy())
             plate_idx = len(plates) - 1
-            target = _best_spot(plates[plate_idx], prerotated[i], piece_rings, choose)
+            target = _best_spot(plates[plate_idx], prerotated[i], piece_rings, choose, edge_weight)
         if target is None:
             # Reachable only with validate=False (validate=True raises up front):
             # honor the documented contract instead of failing on the unpack.
@@ -82,6 +84,25 @@ def pack(
     return sorted(placements, key=lambda p: p.piece)
 
 
+def _elongation(mask: np.ndarray) -> float:
+    """long_side / short_side of the min-area bounding box (>= 1)."""
+    pts = np.argwhere(mask > 0)[:, ::-1].astype(np.int32)
+    (_, (w, h), _) = cv2.minAreaRect(pts)
+    lo, hi = min(w, h), max(w, h)
+    return hi / lo if lo > 0 else 1.0
+
+
+def seed_order(pieces, ordering: str = "difficulty") -> list[int]:
+    """Greedy insertion seed order. 'difficulty' = area * elongation descending
+    (a long thin piece needs a long channel that only exists early); 'area' =
+    legacy largest-area-first."""
+    if ordering == "area":
+        key = lambda i: float(pieces[i].sum())  # noqa: E731
+    else:
+        key = lambda i: float(pieces[i].sum()) * _elongation(pieces[i])  # noqa: E731
+    return sorted(range(len(pieces)), key=key, reverse=True)
+
+
 def _fits(plate, piece):
     return (
         piece.shape[0] <= plate.shape[0]
@@ -90,7 +111,7 @@ def _fits(plate, piece):
     )
 
 
-def _best_spot(occupancy, variants, rings, choose):
+def _best_spot(occupancy, variants, rings, choose, edge_weight=1.0):
     """Best (anchor, angle, contact) across rotations: highest contact, then
     lowest row/col; ties beyond that keep the earliest angle."""
     best = None  # (sort_key, anchor, angle, score)
@@ -99,7 +120,9 @@ def _best_spot(occupancy, variants, rings, choose):
             continue
         legal = legal_placement_map(occupancy, mask)
         contact = (
-            contact_map(occupancy, rings[angle]) if rings is not None else np.zeros(legal.shape)
+            contact_map(occupancy, rings[angle], edge_weight)
+            if rings is not None
+            else np.zeros(legal.shape)
         )
         anchor = choose(legal, contact)
         if anchor is None:
@@ -129,13 +152,16 @@ def contact_ring(mask: np.ndarray) -> np.ndarray:
     return cv2.dilate(padded, np.ones((3, 3), np.uint8)) - padded
 
 
-def contact_map(plate: np.ndarray, ring: np.ndarray) -> np.ndarray:
+def contact_map(plate: np.ndarray, ring: np.ndarray, edge_weight: float = 1.0) -> np.ndarray:
     """Contact score at every anchor: halo pixels touching occupancy or the
-    plate border. Same anchor coordinates and shape as legal_placement_map;
-    np.rint collapses FFT noise so score ties are exact."""
-    attraction = np.pad(plate, 1, constant_values=1)
-    raw = fftconvolve(attraction.astype(np.float32), ring[::-1, ::-1].astype(np.float32), "valid")
-    return np.rint(raw)
+    plate border. The border frame is weighted by edge_weight (occupancy stays
+    weight 1). Same anchor coordinates/shape as legal_placement_map. Rounding to
+    2 decimals collapses FFT float noise (measured <3e-4 on full-size plates, so
+    2-decimal rounding is ~18x-safe) for stable ties, while preserving fractional
+    edge_weight signal -- plain np.rint would quantize e.g. edge_weight=0.1 to 0."""
+    attraction = np.pad(plate.astype(np.float32), 1, constant_values=edge_weight)
+    raw = fftconvolve(attraction, ring[::-1, ::-1].astype(np.float32), "valid")
+    return np.round(raw, 2)
 
 
 def contact_first(legal: np.ndarray, contact: np.ndarray) -> tuple[int, int] | None:

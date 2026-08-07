@@ -2,12 +2,14 @@
 
 import gc
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import typer
 
-from plate_packer.config import load_config
+from plate_packer.angles import angle_candidates
+from plate_packer.config import _validate, load_config
 from plate_packer.export import (
     export_plates,
     load_piece_mesh,
@@ -25,7 +27,7 @@ from plate_packer.footprint_io import (
 )
 from plate_packer.improve import improve
 from plate_packer.loading import prepare_mask
-from plate_packer.packer import CHOOSERS, _fits, pack, rotate_mask
+from plate_packer.packer import CHOOSERS, _fits, pack, rotate_mask, seed_order
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -94,12 +96,24 @@ def pack_command(
     budget: float = typer.Option(
         None,
         "--budget",
-        help="improvement budget in seconds (0 = plain greedy; default: config)",
+        help="coarse-search budget in seconds (0 = plain greedy; default: config). "
+        "Total runtime also includes up to (beam+1) unbudgeted fine packs after.",
     ),
     seed: int = typer.Option(None, help="improvement search RNG seed (default: config)"),
+    coarse_res: float = typer.Option(
+        None, "--coarse-res", help="coarse search resolution mm/px (default: config)"
+    ),
+    beam: int = typer.Option(None, "--beam", help="fine-refinement beam width (default: config)"),
 ):
     """Pack STL/OBJ files onto build plates and export one merged STL per plate."""
     cfg = load_config(config)
+    if coarse_res is not None or beam is not None:
+        cfg = replace(
+            cfg,
+            coarse_res_mm=cfg.coarse_res_mm if coarse_res is None else coarse_res,
+            beam=cfg.beam if beam is None else beam,
+        )
+        _validate(cfg)
     fp_dir = footprints_dir or cfg.footprints_dir
     out_dir = out or cfg.output_dir
     res = cfg.working_res_mm
@@ -115,7 +129,6 @@ def pack_command(
     if m_px:
         plate_mask[:m_px, :] = plate_mask[-m_px:, :] = 1
         plate_mask[:, :m_px] = plate_mask[:, -m_px:] = 1
-    angles = [i * 360.0 / cfg.rotations for i in range(cfg.rotations)]
 
     errors: list[tuple[Path, str]] = []
     piece_files: list[Path] = []
@@ -141,7 +154,13 @@ def pack_command(
             mask, origin = prepare_mask(doc, cfg.spacing_mm, res)
             # Same predicate pack()/improve() would run with validate=True; call
             # it directly so the two never drift (both later run validate=False).
-            fits = any(_fits(plate_mask, rotate_mask(mask, a)[0]) for a in angles)
+            cand = angle_candidates(
+                mask,
+                cap=cfg.angle_cap,
+                min_edge_frac=cfg.min_edge_frac,
+                safety_grid=cfg.safety_grid,
+            )
+            fits = any(_fits(plate_mask, rotate_mask(mask, a)[0]) for a in cand)
             if not fits:
                 errors.append((f, "does not fit an empty plate at any rotation"))
                 continue
@@ -168,13 +187,20 @@ def pack_command(
         res_improve = improve(
             masks,
             plate_shape,
-            rotations=cfg.rotations,
             plate_mask=plate_mask,
             choose=choose,
             budget_s=budget_s,
             min_improvement=cfg.min_improvement,
             patience=cfg.patience,
             seed=seed_val,
+            working_res_mm=res,
+            coarse_res_mm=cfg.coarse_res_mm,
+            beam=cfg.beam,
+            angle_cap=cfg.angle_cap,
+            min_edge_frac=cfg.min_edge_frac,
+            safety_grid=cfg.safety_grid,
+            edge_contact_weight=cfg.edge_contact_weight,
+            ordering=cfg.ordering,
             validate=False,
             on_improve=lambda evals, plates, fit: typer.echo(
                 f"  improve: eval {evals}: {plates} plate(s), fitness {fit:.4f}"
@@ -187,14 +213,33 @@ def pack_command(
             f"fitness {res_improve.fitness_initial:.4f} -> {res_improve.fitness_final:.4f}"
         )
     else:
+        prerot = [
+            {
+                a: rotate_mask(masks[i], a)[0]
+                for a in angle_candidates(
+                    masks[i],
+                    cap=cfg.angle_cap,
+                    min_edge_frac=cfg.min_edge_frac,
+                    safety_grid=cfg.safety_grid,
+                )
+            }
+            for i in range(len(masks))
+        ]
         placements = pack(
             masks,
             plate_shape,
-            rotations=cfg.rotations,
             plate_mask=plate_mask,
             choose=choose,
+            prerotated=prerot,
+            order=seed_order(masks, cfg.ordering),
             validate=False,
+            edge_weight=cfg.edge_contact_weight,
         )
+
+    # Echo the search summary before export so the (expensive) fitness result
+    # is visible even if a downstream export/verify stage fails on a large job.
+    if improve_line:
+        typer.echo(improve_line)
 
     # Stage 4: exact transforms + export.
     transforms = []

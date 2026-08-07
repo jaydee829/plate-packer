@@ -75,24 +75,58 @@ def read_stl_triangles(path: Path) -> np.ndarray:
     return np.asarray(load_piece_mesh(path).triangles, dtype=np.float32)
 
 
+def _transform_triangles(tris: np.ndarray, t4: np.ndarray) -> np.ndarray:
+    """Apply a 4x4 rigid transform to an (n, 3, 3) triangle soup, in float32."""
+    rot = t4[:3, :3].astype(np.float32)
+    trans = t4[:3, 3].astype(np.float32)
+    flat = tris.reshape(-1, 3).astype(np.float32)
+    moved = flat @ rot.T + trans
+    return moved.reshape(-1, 3, 3)
+
+
+def _stl_records(tris: np.ndarray) -> np.ndarray:
+    """Pack (n, 3, 3) triangles into binary-STL records with unit face normals
+    (degenerate triangles get a zero normal, as slicers recompute anyway)."""
+    normals = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals = np.divide(normals, lengths, out=np.zeros_like(normals), where=lengths > 0)
+    rec = np.zeros(len(tris), dtype=_STL_RECORD)
+    rec["normal"] = normals.astype(np.float32)
+    rec["verts"] = tris.astype(np.float32)
+    return rec
+
+
+# 80-byte binary-STL header. Must NOT begin with "solid" or ASCII parsers misread it.
+_STL_HEADER = b"plate_packer binary STL".ljust(80, b"\x00")
+
+
 def export_plates(files, placements, transforms, output_dir: Path) -> list[Path]:
-    """One merged binary STL per plate; meshes loaded and freed plate-by-plate
-    so memory stays bounded to a single plate. Z is never modified."""
+    """One merged binary STL per plate, written by streaming transformed
+    triangle records piece-by-piece. Peak memory stays bounded to a single
+    piece -- never the whole plate, and never trimesh's float64 triangle/cross/
+    normal caches, which OOMed exporting multi-million-triangle plates. The
+    per-piece triangles are read straight from the source STL (read_stl_triangles),
+    transformed, and appended to the open file. Z is never modified."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     n_plates = max(p.plate for p in placements) + 1
     written: list[Path] = []
     for plate_idx in range(n_plates):
-        parts = []
-        for pl in placements:
-            if pl.plate != plate_idx:
-                continue
-            mesh = load_piece_mesh(files[pl.piece])
-            mesh.apply_transform(transforms[pl.piece])
-            parts.append(mesh)
-        merged = parts[0] if len(parts) == 1 else trimesh.util.concatenate(parts)
         path = output_dir / f"plate_{plate_idx + 1:02d}.stl"
-        merged.export(path)
+        total = 0
+        with open(path, "wb") as fh:
+            fh.write(_STL_HEADER)
+            fh.write(np.uint32(0).tobytes())  # triangle-count placeholder, backfilled below
+            for pl in placements:
+                if pl.plate != plate_idx:
+                    continue
+                tris = _transform_triangles(
+                    read_stl_triangles(files[pl.piece]), transforms[pl.piece]
+                )
+                fh.write(_stl_records(tris).tobytes())
+                total += len(tris)
+            fh.seek(80)
+            fh.write(np.uint32(total).tobytes())
         written.append(path)
     return written
 

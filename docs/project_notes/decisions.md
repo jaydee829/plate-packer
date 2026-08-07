@@ -194,6 +194,13 @@ requires storing both mask variants and changes packer internals for no precisio
 **Consequences:** Halved dilation radii vs. the pre-ADR behavior; prepare_mask returns
 (mask, origin_mm) so export can compose exact transforms.
 
+**Update (2026-08-07): `spacing_mm` default lowered 2.0 → 1.0mm** (user-approved). On
+the 30-piece benchmark, 1mm keeps the same 4-plate floor (area-bound for this set) but
+packs the used plates denser (raw occupancy up on 3 of 4). 1mm is a reasonable baseline
+for pre-supported minis; bump for beefier supports. Purely the *default* — the knob and
+its spacing/2 semantics are unchanged, and it's applied at load time (undilated cache
+reused, so re-runs at other values are cheap). See key_facts "Real-World Benchmarks".
+
 ### ADR-011: Falkenauer fitness + contact-scored placement + targeted-move ILS (2026-08-05)
 
 **Context:** Greedy bottom-left first-fit reached 54-62% occupancy on the 30-piece
@@ -223,6 +230,69 @@ search (SOTA) -> deferred to v2+ (different architecture: penetration maps, incr
 **Consequences:** `pack()` gained prerotated/order/validate params (rotation cached across
 repacks); `Placement.contact` records the chosen anchor's score; contact adds a second FFT
 per placement attempt (~2x constructor cost, reclaimed by rotation caching in the loop).
+
+### ADR-012: Shape-aware angles + coarse-to-fine beam search (2026-08-06)
+
+**Context:** Benchmark on the 30-piece set (see key_facts "Real-World
+Benchmarks") showed contact-scored greedy regressed to 5 plates at 8 rotations
+but recovered to 4 plates (beating bottom-left greedy) at 16 rotations — the
+regression was a 45°-granularity artifact (irregular hull edges rarely lie
+parallel to anything). But each repack costs ~105-196s, so a uniform fine
+rotation grid starves the ILS search. Keeps contact as default (revises the
+post-ADR-011 "flip to bottom-left" idea — with enough rotations contact wins).
+
+**Decision:** (1) **Shape-aware angle candidates** (`angles.py`): lay convex-hull
+edges parallel to plate axes, capped, circle-like → 1 angle; a uniform
+safety-grid union is available but off by default. (2) **Coarse-to-fine beam
+search**: run the ILS at a coarse resolution (0.4mm, ~16x cheaper evals),
+keep the top-K orderings, fine-pack only those at 0.1mm, return the best fine
+result. Coarse-legal ⇒ fine-legal (block-max downsample grows masks, so coarse
+masks are supersets). (3) **Difficulty-first ordering** seed (area × elongation)
+replaces largest-area-first. Fixed beam-K now; adaptive successive-halving
+deferred until coarse↔fine correlation data justifies it.
+
+**Alternatives:** uniform fine grid (no shape-awareness) → wasteful, starves
+search. Adaptive/hierarchical beam from the start → YAGNI, K is small so batch
+fine-refine is cheap; build after fixed-beam yields correlation data. Cluster
+nesting, delta-evaluation → deferred.
+
+**Consequences:** `improve()` restructured (coarse/fine masks, beam);
+`contact_map` gains `edge_weight` (plate-edge vs piece-piece contact weight,
+default 1.0 = equal). Spec: docs/superpowers/specs/2026-08-06-rotation-resolution-design.md.
+
+**Retrospective (2026-08-07, validated on the 30-piece set):** final result
+**4 plates / fine fitness 0.4801**, beating bottom-left (0.4765) and 16-rot
+contact (0.4785) — but only after two corrections and a default change:
+
+1. **Shape-aware angles alone under-deliver — the "targeted angles replace
+   uniform grids" premise only half-held.** With `safety_grid=0` the pack came
+   out at **5 plates / 0.3497**: the 30 pieces averaged only 4.7 shape-aware
+   angles each (5 circular bases got just 1), far short of the ~16 rotations
+   contact scoring needs. The uniform `safety_grid` backstop does the heavy
+   lifting; shape-aware angles are a *supplement*, not a replacement.
+   **`safety_grid` default flipped 0 → 16** so the tool performs out of the box
+   (with `angle_cap=12`, safety_grid=16 → ~8 distinct mod-180 uniform angles
+   unioned with shape-aware, capped to 12). This partly re-opens the ADR-011
+   "contact vs bottom-left" question: contact only wins with enough rotations.
+   **CAVEAT (2026-08-07, review round 2): this "shape-aware under-delivers"
+   conclusion was CONFOUNDED by a bug** — `angle_candidates` emitted the mirror
+   angle, so the shape-aware angles were generically *wrong* (bugs.md). With that
+   fixed, shape-aware angles may now contribute meaningfully and `safety_grid`
+   might be reducible. **Re-benchmark before trusting the default-16 value** and
+   re-assess whether shape-aware angles earn their keep vs a pure uniform grid.
+2. **The fine stage lost a plate by re-packing instead of realizing the coarse
+   layout** (coarse fit 4, fine re-pack spilled to 5). Fixed: the fine stage now
+   also realizes the coarse layout (`_scale_placements`, anchors × factor —
+   collision-free/in-bounds by the block-max superset property + a coarse-plate
+   padding guard) and keeps the better of {fine re-pack, realized-coarse}. See
+   bugs.md 2026-08-07. **General lesson:** a multi-resolution search must
+   *realize* the coarse solution, not rank orderings and re-solve at fine.
+3. **Export OOMed at production scale** (trimesh float64 caches on a ~3.9M-tri
+   plate) — rewrote `export_plates` to stream the binary STL per piece. bugs.md.
+
+Deferred/next: shape-aware angles' marginal value over pure uniform is now
+questionable — a future pass could measure whether they add anything beyond the
+safety grid, and revisit `angle_cap` given safety_grid is on by default.
 
 ## Usage Tips
 

@@ -12,7 +12,7 @@ class PackConfig:
     plate_mm: tuple[float, float] = (197.0, 122.0)  # Anycubic Photon Mono X 6K
     build_height_mm: float = 245.0
     working_res_mm: float = 0.1
-    spacing_mm: float = 2.0  # true minimum gap between pieces (ADR-010)
+    spacing_mm: float = 1.0  # true minimum gap between pieces (ADR-010); bump for beefier supports
     edge_margin_mm: float = 0.0
     rotations: int = 8
     footprints_dir: Path = Path("footprints")
@@ -22,6 +22,13 @@ class PackConfig:
     patience: int = 30
     seed: int = 0
     placement: str = "contact"
+    coarse_res_mm: float = 0.4
+    beam: int = 5
+    angle_cap: int = 12
+    min_edge_frac: float = 0.1
+    safety_grid: int = 16  # uniform-rotation backstop unioned with shape-aware angles (ADR-012)
+    edge_contact_weight: float = 1.0
+    ordering: str = "difficulty"
 
 
 def load_config(path: Path | None = None) -> PackConfig:
@@ -45,6 +52,15 @@ def load_config(path: Path | None = None) -> PackConfig:
         patience=int(packing.get("patience", PackConfig.patience)),
         seed=int(packing.get("seed", PackConfig.seed)),
         placement=str(packing.get("placement", PackConfig.placement)),
+        coarse_res_mm=float(packing.get("coarse_res_mm", PackConfig.coarse_res_mm)),
+        beam=int(packing.get("beam", PackConfig.beam)),
+        angle_cap=int(packing.get("angle_cap", PackConfig.angle_cap)),
+        min_edge_frac=float(packing.get("min_edge_frac", PackConfig.min_edge_frac)),
+        safety_grid=int(packing.get("safety_grid", PackConfig.safety_grid)),
+        edge_contact_weight=float(
+            packing.get("edge_contact_weight", PackConfig.edge_contact_weight)
+        ),
+        ordering=str(packing.get("ordering", PackConfig.ordering)),
     )
     _validate(cfg)
     return cfg
@@ -77,3 +93,20 @@ def _validate(cfg: PackConfig) -> None:
         raise ValueError("packing.patience must be >= 1")
     if cfg.placement not in ("contact", "bottom_left"):
         raise ValueError('packing.placement must be "contact" or "bottom_left"')
+    ratio = cfg.coarse_res_mm / cfg.working_res_mm
+    if cfg.coarse_res_mm < cfg.working_res_mm or abs(ratio - round(ratio)) > RES_RATIO_TOL:
+        raise ValueError(
+            "packing.coarse_res_mm must be an integer multiple of working_res_mm and >= it"
+        )
+    if cfg.beam < 1:
+        raise ValueError("packing.beam must be >= 1")
+    if cfg.angle_cap < 1:
+        raise ValueError("packing.angle_cap must be >= 1")
+    if not (0 < cfg.min_edge_frac <= 1):
+        raise ValueError("packing.min_edge_frac must be in (0, 1]")
+    if cfg.safety_grid < 0:
+        raise ValueError("packing.safety_grid must be >= 0")
+    if cfg.edge_contact_weight < 0:
+        raise ValueError("packing.edge_contact_weight must be >= 0")
+    if cfg.ordering not in ("difficulty", "area"):
+        raise ValueError('packing.ordering must be "difficulty" or "area"')

@@ -12,6 +12,24 @@ This file tracks work history and ticket references.
 
 ## Log
 
+### 2026-08-07 - PACK-FROM-FILE: `--from-file` selection list for the pack CLI (PR #7)
+- **Status**: Completed (branch feat/pack-from-file, off main)
+- **Description**: `plate-packer pack --from-file PATH` reads newline-separated input paths (# comments + blanks ignored), resolved vs CWD and unioned with positional PATHS (which became optional). Missing listed paths raise a clear `typer.BadParameter`. Motivated by packing `pack_selection.txt` (the 30-piece §8 subset) without a PowerShell `@(Get-Content ...)` splat. 5 new CLI tests.
+- **URL**: https://github.com/jaydee829/plate-packer/pull/7
+- **Notes**: Independent of ADR-012; branched off main. Trivial `pack_command` option-list merge with PR #6 resolved at merge time.
+
+### 2026-08-06 - ROTRES: shape-aware angles + coarse-to-fine beam search (ADR-012)
+- **Status**: Completed — benchmark-validated, review rounds addressed, MERGED (PR #6)
+- **Description**: 7-task SDD of ADR-012. New `angles.py::angle_candidates` (hull-edge-parallel angles, circle→[0.0], 0.0 pinned through cap, analytic-hull-AABB compactness sort). `improve()` restructured to coarse-to-fine beam search: coarse ILS on block-max-superset masks → top-K distinct orderings (`_update_beam`) → fine-pack survivors (`_prerotate_multi_res`) → return best FINE; `ImproveResult.beam` observability. `seed_order` difficulty ordering (area×elongation); `contact_map` `edge_weight`; 7 config knobs; CLI shape-aware fit-check + greedy path + `--coarse-res`/`--beam`. 263 tests.
+- **URL**: https://github.com/jaydee829/plate-packer
+- **Notes**: **VALIDATED on the 30-piece set: 4 plates / fine fitness 0.4801**, beating bottom-left (0.4765) and 16-rot contact (0.4785) — §8 cleared. Getting there took three post-SDD fixes (all on-branch, see bugs.md): (1) realize-coarse — the fine stage re-packed instead of realizing the coarse layout, spilling a plate (coarse 4→fine 5); now keeps the better of {re-pack, scaled-coarse}. (2) streaming STL export — `export_plates` OOMed on ~3.9M-tri plates. (3) `safety_grid` default 0→16 — shape-aware angles alone under-delivered. GitHub auto-review (3 rounds) then caught: fractional `edge_contact_weight` truncated by uint8 pad AND by `np.rint`; `angle_candidates` per-edge angle used the MIRROR sign (generic edges un-aligned — this confounded the "shape-aware under-delivers" read, see decisions.md caveat); unvalidated `--coarse-res`→ZeroDivisionError; seed fine-packed twice; 0.0 cap tie-break. All fixed. `spacing_mm` default 2.0→1.0 (user-approved, denser). **TBD follow-up: re-benchmark with the corrected angles to see if `safety_grid` can drop / whether shape-aware angles earn their keep vs a pure uniform grid.**
+
+### 2026-08-06 - BENCH+ROT: benchmark findings + rotation/resolution milestone spec'd
+- **Status**: Spec complete (branch feat/rotation-resolution), plan+SDD next
+- **Description**: Benchmarked ADR-011 on the 30-piece set (no STL export, direct improve() probes). Found: (a) contact-scored greedy REGRESSED to 5 plates vs bottom-left's 4 at 8 rotations; (b) at 16 rotations contact greedy recovers to 4 plates / fitness 0.4785, beating bottom-left (0.4765); (c) each repack costs ~105-196s so the ILS is starved (5 evals → 0 improvements). Concluded: raise rotations but make them affordable (coarse-res search) and targeted (shape-aware angles). Spec: ADR-012 / docs/superpowers/specs/2026-08-06-rotation-resolution-design.md.
+- **URL**: https://github.com/jaydee829/plate-packer
+- **Notes**: The 60-min background pack could not run — this machine kills detached heavy compute (confirmed; see [[background-heavy-compute-killed]] memory). Ran foreground probes ≤10min instead. plates/ (original 4-plate greedy output) preserved for eyeball. Full-length runs must go via the user's own terminal (`!` prefix).
+
 ### 2026-08-05 - IMPROVE: contact-scored placement + targeted-move ILS (ADR-011)
 - **Status**: Completed (branch feat/packing-improvement, awaiting merge)
 - **Description**: Full cycle: deep-research survey (docs/research/) → spec → 6-task SDD. Contact-scoring kernel (ring + FFT contact map), scored default chooser, `pack()` prerotated/order/validate params, Falkenauer fitness, targeted/random ILS moves, `improve()` with budget+stall stops, config knobs + CLI `--budget`/`--seed` + report line. 206 tests.
