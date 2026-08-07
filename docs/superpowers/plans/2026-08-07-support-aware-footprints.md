@@ -152,14 +152,19 @@ def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     shape = (int(size_px[1]), int(size_px[0]))
     tri_px = np.round((xy - origin) / res_mm).astype(np.int32)
     tri_zmax = z.max(axis=1)
-    # Per-pixel top-reach map: paint (max_Z - z0 + 1) with the highest last so each
-    # pixel keeps its tallest triangle. Occupied pixels are >= 1; empty stay 0.
-    reach = np.zeros(shape, np.float32)
+    # Per-pixel top-reach map: each pixel keeps the tallest (max_Z - z0) of the
+    # triangles covering it (fill in ascending order so the tallest paints last).
+    # float64 with NO additive offset: a large offset in float32 rounds away the
+    # sub-ULP fraction at band boundaries, so reach would drop a pixel one band
+    # before the float-compared body mask does (real-STL bug). area(d) = reach > d
+    # then matches the body rule max_Z > z0 + d exactly. Empty and base-only pixels
+    # stay 0 and are correctly excluded without an offset.
+    reach = np.zeros(shape, np.float64)
     for i in np.argsort(tri_zmax):
-        cv2.fillConvexPoly(reach, tri_px[i], float(tri_zmax[i] - z0 + 1.0))
+        cv2.fillConvexPoly(reach, tri_px[i], float(tri_zmax[i] - z0))
 
     def area(d):  # pixels whose top reach is above cut depth d
-        return int((reach > d + 1.0).sum())
+        return int((reach > d).sum())
 
     a_full = area(0.0)
     if a_full == 0:
@@ -176,9 +181,12 @@ def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     return 0.0
 ```
 
-Note the `area(0.0)` uses `reach > 1.0` (strictly above `z0`), so a pixel whose
-tallest covering triangle sits exactly at `z0` is treated as base — consistent
-with the `max Z > z0 + cut` body rule.
+Note `area(0.0)` uses `reach > 0` (strictly above `z0`), so an empty pixel or one
+whose tallest covering triangle sits exactly at `z0` is excluded — consistent with
+the `max Z > z0 + cut` body rule. The float64/no-offset choice is load-bearing:
+with a float32 `+1.0` offset the reach map dropped raft-top pixels a band early
+(their fraction rounded off near 1.5), cutting too shallow for 0% reduction on
+real STLs while the synthetic slab tests still passed.
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -1191,7 +1199,19 @@ tried and rejected — shells have no solid cross-section, and caps cut too shal
 and the measured −14% to −32% reduction on real `*_supported.stl`. Alternatives
 rejected: fixed-mm cut, per-piece numeric cut, band-stack. Reference the spec path.
 
-- [ ] **Step 2: Add key facts**
+- [ ] **Step 2: Add the bug entry**
+
+Append to `docs/project_notes/bugs.md` a dated entry: **detector reach map lost a
+band to float32 + offset.** The single-pass top-reach map first stored
+`max_Z − z0 + 1.0` in a float32 canvas; near ~1.5 the float32 ULP rounded off the
+sub-mm fraction, so `area(d)` dropped raft-top pixels one `BAND_MM` early and the
+cut landed too shallow — 0% real reduction on `*_supported.stl` while the
+synthetic slab unit tests still passed. **Fix:** store `max_Z − z0` (no offset) in
+a **float64** canvas; `area(d) = reach > d` then matches the float-compared body
+mask exactly. Caught by the gated real-STL integration test, not the unit tests —
+note that as the lesson.
+
+- [ ] **Step 3: Add key facts**
 
 Append to `docs/project_notes/key_facts.md`: the new config knobs
 (`support_aware=false`, `support_cut_cap_mm=5.0`); detector constants
@@ -1204,11 +1224,11 @@ marker (deselected by default); and the **stl_curator coordination item** — th
 contract now has an optional `model_body` band that curator should eventually
 emit; plate_packer falls back gracefully until it does.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add docs/project_notes/decisions.md docs/project_notes/key_facts.md
-git commit -m "docs: ADR-013 support-aware footprints + key facts"
+git add docs/project_notes/decisions.md docs/project_notes/key_facts.md docs/project_notes/bugs.md
+git commit -m "docs: ADR-013 support-aware footprints + key facts + bug"
 ```
 
 ---

@@ -70,12 +70,15 @@ at the knee. **The safety cap is the search window** — depths only within
 `[z0, z0 + support_cut_cap_mm]`, never deeper.
 
 Computed in a **single raster pass**, no per-depth re-rasterization: paint each
-pixel with the maximum triangle-`max Z` covering it (fill triangles in ascending
-`max Z` so the highest overwrites) → a per-pixel **top-reach** map. Then
-`area(d)` = count of pixels whose top reach `> z0 + d`, read straight off that map
-for every depth. The reach map is rasterized at a coarse `DETECT_RES_MM` (initial
-`0.2`) — area *ratios* are scale-tolerant, and the coarser grid keeps the extra
-fill cheap.
+pixel with `max Z − z0` of the tallest triangle covering it (fill in ascending
+`max Z` so the tallest paints last) → a per-pixel **top-reach** map, in **float64
+with no additive offset**. Then `area(d)` = pixels whose reach `> d`, read straight
+off that map for every depth. (The offset/precision matters: a float32 map with a
+`+1` offset rounds off the sub-ULP fraction at band boundaries and drops raft-top
+pixels a band early — cutting too shallow on real STLs while synthetic slab tests
+still pass.) The reach map is rasterized at a coarse `DETECT_RES_MM` (initial
+`0.2`) — area *ratios* are scale-tolerant, and the coarser grid keeps the fill
+cheap.
 
 1. `z0 = min Z`. `A_full = area(0)`. If `z1 − z0 ≤ BAND_MM` → cut = 0.
 2. Over depths `d = 0, BAND_MM, 2·BAND_MM, …` within `[0, support_cut_cap_mm]`,
