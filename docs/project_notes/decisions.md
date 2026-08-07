@@ -294,6 +294,31 @@ Deferred/next: shape-aware angles' marginal value over pure uniform is now
 questionable — a future pass could measure whether they add anything beyond the
 safety grid, and revisit `angle_cap` given safety_grid is on by default.
 
+### ADR-013: Support-aware footprints (base-layer exclusion) (2026-08-07)
+
+**Context:**
+- Pre-supported models include rafts and tree supports; on resin plates these rigs occupy material budget but are disposable post-print.
+- Collision detection at v1 conservatively uses the full vertical shadow of the supported mesh (ADR-002), forbidding raft overlap — two rafts cannot coexist on the same plate.
+- Removing base-layer support via footprint-area knee detection allows raft interior to overlap freely while keeping the outline on-plate, freeing interior space for adjacent pieces.
+
+**Decision:**
+- Opt-in `support_aware` config knob (default false). When enabled, extract a `model_body` footprint via **footprint-area knee detection**: measure the projected area of the shadow at each Z-level; find the height `cut_z_mm` where the area stops shrinking within the `support_cut_cap_mm` window (interior cavity base); `model_body` is the conservative superset at Z ≥ cut_z_mm. No cut unless area drops ≥ `MIN_REDUCTION` (5%).
+- **Two-mask collision**: inter-piece collision checks use `model_body` (rafts overlap freely — the point of the feature). Plate-boundary checks use the full shadow (raft outline must stay on-plate), implemented via `rotate_pair` with shared canvas so legality and shape are unified.
+- Cache schema v2 adds optional `model_body` entry (SHA-256 keyed per-STL); reads accept v1 or v2 (falls back to full shadow gracefully). Rafts from the detected cut may fuse in the merged output; acceptable trade-off.
+
+**Alternatives Considered:**
+- Fixed-mm cut (e.g., "cut 1 mm above model base") -> inflexible, meshes vary widely; some have no raft or shallow rafts.
+- Per-piece numeric `cut_z_mm` input -> defers the hard problem to the user; defeats the benefit.
+- Area-cliff detector (jump in area between z-levels) -> meshes are hollow shells, not solid objects; cliffs rarely sharp; rejected in testing.
+- Horizontal-cap detector (find flat z-span) -> same issue; raft caps often sloped or layered; cuts too shallow, 0% gain in real tests.
+- Band-stack alternative (parallel band height evaluation) -> deferred to v2; too complex for v1.
+- Single-mask packing (raft off-plate edge) -> violates the print contract; raft must stay on-plate.
+- Crop-offset verify (separate interior/boundary checks on clipped regions) -> superseded by shared-canvas two-mask approach.
+
+**Consequences:**
+- Pros: 14–32% real measured footprint reduction on `*_supported.stl` from the Tome of Demons corpus; interior concavity gain (real rafts hug outline at 0.0 mm outer flare). Raft fusion acceptable; pieces still print successfully.
+- Trade-offs: Requires correct STL mesh connectivity (non-manifold rafts may fail silently). v2 will add per-band exclusion for deeper overhangs. Detector evolution was hypothesis-driven (area-cliff, horizontal-cap tried first); see bugs.md 2026-08-07 for float32 precision discovery. Spec: `docs/superpowers/specs/2026-08-07-support-aware-footprints-design.md`.
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal
