@@ -58,6 +58,19 @@ def _prerotate_multi_res(pieces, piece_angles, factor):
     return fine, coarse
 
 
+def _scale_placements(placements, scale):
+    """Scale a coarse layout's anchors to fine resolution. Coarse masks are
+    block-max supersets of the fine masks, so the fine masks at the scaled
+    anchors are collision-free and in-bounds -- this preserves the coarse plate
+    count, which a fresh fine re-pack can lose to greedy myopia (the coarse grid
+    regularizes placement; the fine contact-greedy chases local maxima and can
+    spill an extra plate)."""
+    return [
+        Placement(p.piece, p.plate, p.row * scale, p.col * scale, p.angle, p.contact)
+        for p in placements
+    ]
+
+
 def _update_beam(beam, order, fitness, k):
     """Return a new beam of up to k (fitness, order) pairs, best fitness first,
     orderings distinct, ties broken by ordering. Input beam is not mutated."""
@@ -207,10 +220,13 @@ def improve(
     a fully reproducible run set `budget_s` high enough that the stall
     condition always fires first (see key_facts.md).
 
-    fitness_final is always >= fitness_initial: the candidate set for the
-    final fine pack is {difficulty-seed order} U {beam orderings}, so the
-    anytime guarantee holds at fine resolution regardless of what the coarse
-    search finds.
+    fitness_final is always >= fitness_initial: each ordering (the
+    difficulty-seed and every beam member) yields two fine candidates -- a fresh
+    fine re-pack and the coarse layout scaled to fine resolution -- and the best
+    fine fitness over all of them wins. The seed's fine re-pack is always in the
+    set, so the anytime guarantee holds. The scaled-coarse candidate preserves
+    the coarse plate count, which a fresh fine re-pack can otherwise lose to
+    greedy myopia.
 
     on_improve(evaluations, n_plates, fitness) fires at each new coarse best
     (coarse evaluations/fitness -- the search's internal bookkeeping).
@@ -231,7 +247,13 @@ def improve(
 
     empty_fine = plate_mask.copy() if plate_mask is not None else np.zeros(plate_shape, np.uint8)
     coarse_plate_mask = conservative_downsample(empty_fine, factor)
+    # Coarse cells whose fine footprint runs past the real plate (when
+    # plate_shape is not a multiple of factor) are marked occupied, so a coarse
+    # placement always scales back in-bounds at fine resolution.
+    coarse_plate_mask[plate_shape[0] // factor :, :] = 1
+    coarse_plate_mask[:, plate_shape[1] // factor :] = 1
     coarse_shape = coarse_plate_mask.shape
+    realize_scale = factor
 
     fine_piece_px = [int(p.sum()) for p in pieces]
     fine_usable = plate_shape[0] * plate_shape[1] - int(empty_fine.sum())
@@ -253,6 +275,7 @@ def improve(
         coarse_shape = plate_shape
         coarse_piece_px = fine_piece_px
         coarse_usable = fine_usable
+        realize_scale = 1  # coarse phase now runs at fine res; anchors are already fine
 
     if validate:
         # One up-front validation at fine resolution; every repack then runs
@@ -319,24 +342,32 @@ def improve(
             validate=False,
             edge_weight=edge_contact_weight,
         )
-        fit = falkenauer(plate_fills(result, fine_piece_px, fine_usable))
-        return result, fit
+        return result, falkenauer(plate_fills(result, fine_piece_px, fine_usable))
 
-    seed_result, seed_fit = fine_pack(seed_ord)
-    fitness_initial = seed_fit
+    def fine_candidates(order):
+        # Two ways to realize an ordering at fine resolution: a fresh fine
+        # re-pack (tighter positions when it doesn't spill), and the coarse
+        # layout scaled up (can't lose plates to greedy myopia). Return both as
+        # (placements, fine_fitness); the caller keeps whichever scores higher.
+        repack_res, repack_fit = fine_pack(order)
+        coarse_res, _ = eval_coarse(order)
+        realized = _scale_placements(coarse_res, realize_scale)
+        realized_fit = falkenauer(plate_fills(realized, fine_piece_px, fine_usable))
+        return [(repack_res, repack_fit), (realized, realized_fit)]
 
-    beam_fine = []
+    seed_cands = fine_candidates(seed_ord)
+    fitness_initial = seed_cands[0][1]  # seed fine re-pack: the never-worsens baseline
+
+    all_cands = list(seed_cands)
+    beam_out = []
     for coarse_fit, order in beam_list:
-        fine_result, fine_fit = fine_pack(order)
-        beam_fine.append((coarse_fit, fine_fit, fine_result))
+        cands = fine_candidates(order)
+        all_cands.extend(cands)
+        best_res, best_fit = max(cands, key=lambda c: c[1])
+        beam_out.append((coarse_fit, best_fit, max(p.plate for p in best_res) + 1))
 
-    candidates = [(None, seed_fit, seed_result), *beam_fine]
-    _, fitness_final, placements = max(candidates, key=lambda c: c[1])
-
-    beam_out = sorted(
-        ((cf, ff, max(p.plate for p in res) + 1) for cf, ff, res in beam_fine),
-        key=lambda t: -t[1],
-    )
+    placements, fitness_final = max(all_cands, key=lambda c: c[1])
+    beam_out.sort(key=lambda t: -t[1])
 
     return ImproveResult(
         placements, evaluations, improvements, fitness_initial, fitness_final, beam_out

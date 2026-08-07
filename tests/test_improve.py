@@ -15,6 +15,7 @@ from plate_packer.improve import (
     _move_window_shuffle,
     _prerotate_multi_res,
     _reinsert,
+    _scale_placements,
     _update_beam,
     falkenauer,
     improve,
@@ -368,3 +369,28 @@ def test_improve_survives_coarse_growth_of_margin_frame():
     res = improve([piece], plate_shape, plate_mask=margin, budget_s=0.0)
     assert len(res.placements) == 1
     assert res.placements[0].plate == 0
+
+
+@pytest.mark.parametrize("scale", [1, 4], ids=["scale-1", "scale-4"])
+def test_scale_placements_scales_anchors_only(scale):
+    pls = [Placement(0, 0, 2, 3, 90.0, 5.0), Placement(1, 1, 0, 5, 0.0, 2.0)]
+    out = _scale_placements(pls, scale)
+    assert [(p.piece, p.plate, p.row, p.col, p.angle, p.contact) for p in out] == [
+        (0, 0, 2 * scale, 3 * scale, 90.0, 5.0),
+        (1, 1, 0, 5 * scale, 0.0, 2.0),
+    ]
+
+
+def test_improve_output_in_bounds_and_collision_free_nondivisible_plate():
+    # plate_shape (10, 10) is NOT a multiple of the coarse factor (4), exercising
+    # the coarse-plate padding guard: every returned placement (fine re-pack or
+    # the scaled-coarse layout) must be collision-free AND fully inside the plate.
+    pieces = [solid(3, 3), solid(2, 4), solid(4, 2), solid(3, 2), solid(2, 2)]
+    res = improve(pieces, (10, 10), budget_s=0.3, patience=30, min_improvement=0.0, seed=2)
+    occ = {}
+    for p in res.placements:
+        m, _ = rotate_mask(pieces[p.piece], p.angle)
+        assert p.row + m.shape[0] <= 10 and p.col + m.shape[1] <= 10  # in bounds
+        plate = occ.setdefault(p.plate, np.zeros((10, 10), np.uint8))
+        plate[p.row : p.row + m.shape[0], p.col : p.col + m.shape[1]] += m
+    assert all(plate.max() <= 1 for plate in occ.values())
