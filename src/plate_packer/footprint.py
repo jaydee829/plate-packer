@@ -52,14 +52,19 @@ def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     shape = (int(size_px[1]), int(size_px[0]))
     tri_px = np.round((xy - origin) / res_mm).astype(np.int32)
     tri_zmax = z.max(axis=1)
-    # Per-pixel top-reach map: paint (max_Z - z0 + 1) with the highest last so each
-    # pixel keeps its tallest triangle. Occupied pixels are >= 1; empty stay 0.
-    reach = np.zeros(shape, np.float32)
+    # Per-pixel top-reach map: each pixel keeps the tallest (max_Z - z0) of the
+    # triangles covering it (fill in ascending order so the tallest paints last).
+    # float64 with NO additive offset: a large offset in float32 rounds away the
+    # sub-ULP fraction at band boundaries, so reach would drop a pixel one band
+    # before the float-compared body mask does (real-STL bug). area(d) = reach > d
+    # then matches the body rule max_Z > z0 + d exactly. Empty and base-only pixels
+    # stay 0 and are correctly excluded without an offset.
+    reach = np.zeros(shape, np.float64)
     for i in np.argsort(tri_zmax):
-        cv2.fillConvexPoly(reach, tri_px[i], float(tri_zmax[i] - z0 + 1.0))
+        cv2.fillConvexPoly(reach, tri_px[i], float(tri_zmax[i] - z0))
 
     def area(d):  # pixels whose top reach is above cut depth d
-        return int((reach > d + 1.0).sum())
+        return int((reach > d).sum())
 
     a_full = area(0.0)
     if a_full == 0:
