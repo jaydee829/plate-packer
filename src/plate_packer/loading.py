@@ -43,18 +43,25 @@ def dilation_radius_px(spacing_mm: float, working_res_mm: float) -> int:
 
 
 def prepare_mask(
-    doc: FootprintDoc, spacing_mm: float, working_res_mm: float
+    doc: FootprintDoc, spacing_mm: float, working_res_mm: float, kind: str = "full_shadow"
 ) -> tuple[np.ndarray, tuple[float, float]]:
     """Returns (mask, origin_mm): origin_mm is the XY of the prepared mask's
     pixel (0,0). Dilation pads all sides, shifting it by -r_px*res per axis;
-    conservative downsample keeps blocks anchored at pixel 0 (no shift)."""
+    conservative downsample keeps blocks anchored at pixel 0 (no shift).
+    kind selects either 'full_shadow' (default, doc.masks[0]) or 'model_body' (doc.body_mask)."""
     ratio = working_res_mm / doc.res_mm_per_px
     if abs(ratio - round(ratio)) > RES_RATIO_TOL or ratio < 1:
         raise ValueError(
             f"working res {working_res_mm} must be an integer multiple "
             f"of canonical res {doc.res_mm_per_px}"
         )
-    mask = conservative_downsample(doc.masks[0], round(ratio))
+    if kind == "model_body":
+        if doc.body_mask is None:
+            raise ValueError("doc has no model_body mask")
+        source = doc.body_mask
+    else:
+        source = doc.masks[0]
+    mask = conservative_downsample(source, round(ratio))
     origin = (float(doc.origin_mm[0]), float(doc.origin_mm[1]))
     r_px = dilation_radius_px(spacing_mm, working_res_mm)
     if r_px:
