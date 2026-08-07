@@ -368,8 +368,13 @@ def improve(
     all_cands = list(seed_cands)
     beam_out = []
     for coarse_fit, order in beam_list:
-        cands = fine_candidates(order)
-        all_cands.extend(cands)
+        # The seed is pre-seeded into the beam, so reuse its already-computed
+        # fine candidates instead of re-running a (minutes-long) fine pack.
+        if order == seed_ord:
+            cands = seed_cands
+        else:
+            cands = fine_candidates(order)
+            all_cands.extend(cands)
         best_res, best_fit = max(cands, key=lambda c: c[1])
         beam_out.append((coarse_fit, best_fit, max(p.plate for p in best_res) + 1))
 

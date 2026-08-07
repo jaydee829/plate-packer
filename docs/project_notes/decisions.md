@@ -194,6 +194,13 @@ requires storing both mask variants and changes packer internals for no precisio
 **Consequences:** Halved dilation radii vs. the pre-ADR behavior; prepare_mask returns
 (mask, origin_mm) so export can compose exact transforms.
 
+**Update (2026-08-07): `spacing_mm` default lowered 2.0 → 1.0mm** (user-approved). On
+the 30-piece benchmark, 1mm keeps the same 4-plate floor (area-bound for this set) but
+packs the used plates denser (raw occupancy up on 3 of 4). 1mm is a reasonable baseline
+for pre-supported minis; bump for beefier supports. Purely the *default* — the knob and
+its spacing/2 semantics are unchanged, and it's applied at load time (undilated cache
+reused, so re-runs at other values are cheap). See key_facts "Real-World Benchmarks".
+
 ### ADR-011: Falkenauer fitness + contact-scored placement + targeted-move ILS (2026-08-05)
 
 **Context:** Greedy bottom-left first-fit reached 54-62% occupancy on the 30-piece

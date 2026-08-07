@@ -75,6 +75,7 @@ This file tracks important project configuration, constants, and environment det
 - **Rotation steps**: ~36–72, config knob.
 - **Coordinate convention (landmine)**: packer works in pixel space; slicers expect millimeters with origin at plate center. Export = pixel → mm → recenter about plate midpoint. Rotation about Z only; Z never touched.
 - **Margin handling (ADR-009)**: cached footprints are undilated at canonical 0.05 mm/px; spacing dilation + conservative downsample happen at load time (`plate_packer.loading.prepare_mask`); packer core is margin-unaware.
+- **`spacing_mm` default is 1.0mm (2026-08-07, was 2.0mm; user-approved)** — the true inter-piece gap (ADR-010); 1mm packs denser on the benchmark set while keeping the 4-plate floor. Tunable per support geometry; applied at load time so re-runs at other values reuse the undilated cache.
 - **Config surface**: plate dims (mm) + optional unusable-region mask, build volume Z, raster resolution, min spacing, rotation steps, placement heuristic, improvement time budget — single dataclass or TOML.
 
 ## Usage Tips

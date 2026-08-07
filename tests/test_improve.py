@@ -157,6 +157,7 @@ def test_improve_budget_zero_equals_greedy_seed_pack():
     expected = pack(pieces, (6, 6), prerotated=prerot, order=order, validate=False)
     assert res.placements == expected
     assert res.evaluations == 1
+    assert res.improvements == 0
     assert res.fitness_initial == res.fitness_final
 
 

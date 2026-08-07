@@ -64,7 +64,9 @@ def angle_candidates(
     deduped.sort(key=lambda a: (_analytic_aabb_area(hull, a), a))
     result = deduped[:cap]
     if 0.0 not in result:
-        # 0.0 (the lossless un-rotated path) must always remain available;
-        # drop the least-compact candidate to make room within the cap.
-        result = [*deduped[: cap - 1], 0.0]
+        # 0.0 (the lossless un-rotated path) must always remain available; drop
+        # the least-compact candidate for it, then re-sort so 0.0 sits at its
+        # true compactness rank (and wins score ties by the ascending-value key,
+        # as the lossless orientation should) rather than always landing last.
+        result = sorted([*deduped[: cap - 1], 0.0], key=lambda a: (_analytic_aabb_area(hull, a), a))
     return result
