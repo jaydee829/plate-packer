@@ -29,7 +29,7 @@ output_dir = "out"
         ("plate_mm", (197.0, 122.0)),
         ("build_height_mm", 245.0),
         ("working_res_mm", 0.1),
-        ("spacing_mm", 2.0),
+        ("spacing_mm", 1.0),
         ("edge_margin_mm", 0.0),
         ("rotations", 8),
         ("footprints_dir", Path("footprints")),
@@ -97,7 +97,7 @@ def test_validation_errors(tmp_path, toml, match):
 
 def test_working_res_triple_of_canonical_ok(tmp_path):
     p = tmp_path / "config.toml"
-    p.write_text("[packing]\nworking_res_mm = 0.15\n", encoding="utf-8")
+    p.write_text("[packing]\nworking_res_mm = 0.15\ncoarse_res_mm = 0.30\n", encoding="utf-8")
     assert load_config(p).working_res_mm == 0.15
 
 
@@ -140,3 +140,65 @@ def test_improvement_knobs_load_from_toml(tmp_path):
     assert cfg.patience == 5
     assert cfg.seed == 42
     assert cfg.placement == "bottom_left"
+
+
+def test_config_defaults_include_coarse_to_fine_knobs(tmp_path):
+    cfg = load_config(tmp_path / "missing.toml")
+    assert cfg.coarse_res_mm == 0.4
+    assert cfg.beam == 5
+    assert cfg.angle_cap == 12
+    assert cfg.min_edge_frac == 0.1
+    assert cfg.safety_grid == 16  # uniform-rotation backstop on by default (2026-08-07 benchmark)
+    assert cfg.edge_contact_weight == 1.0
+    assert cfg.ordering == "difficulty"
+
+
+def test_config_reads_coarse_to_fine_knobs(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[packing]\n"
+        "coarse_res_mm = 0.5\n"
+        "beam = 8\n"
+        "angle_cap = 6\n"
+        "min_edge_frac = 0.2\n"
+        "safety_grid = 12\n"
+        "edge_contact_weight = 2.0\n"
+        'ordering = "area"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert (cfg.coarse_res_mm, cfg.beam, cfg.angle_cap) == (0.5, 8, 6)
+    assert (cfg.min_edge_frac, cfg.safety_grid, cfg.edge_contact_weight) == (0.2, 12, 2.0)
+    assert cfg.ordering == "area"
+
+
+@pytest.mark.parametrize(
+    "key, match",
+    [
+        ("coarse_res_mm = 0.05", "coarse_res_mm"),  # below working_res_mm (0.1)
+        ("coarse_res_mm = 0.35", "coarse_res_mm"),  # not an integer multiple of 0.1
+        ("beam = 0", "beam"),
+        ("angle_cap = 0", "angle_cap"),
+        ("min_edge_frac = 0", "min_edge_frac"),
+        ("min_edge_frac = 1.5", "min_edge_frac"),
+        ("safety_grid = -1", "safety_grid"),
+        ("edge_contact_weight = -0.5", "edge_contact_weight"),
+        ('ordering = "spiral"', "ordering"),
+    ],
+    ids=[
+        "coarse-below-working",
+        "coarse-not-multiple",
+        "beam-zero",
+        "cap-zero",
+        "edge-frac-zero",
+        "edge-frac-gt-one",
+        "safety-negative",
+        "edge-weight-negative",
+        "ordering-unknown",
+    ],
+)
+def test_config_rejects_invalid_coarse_to_fine_knobs(tmp_path, key, match):
+    p = tmp_path / "config.toml"
+    p.write_text(f"[packing]\n{key}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=match):
+        load_config(p)

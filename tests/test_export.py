@@ -5,6 +5,8 @@ import pytest
 import trimesh
 
 from plate_packer.export import (
+    _stl_records,
+    _transform_triangles,
     export_plates,
     placement_transform,
     read_stl_triangles,
@@ -81,6 +83,90 @@ def test_absolute_coordinates_known_box():
     moved.apply_transform(t4)
     np.testing.assert_allclose(moved.bounds[0], [-50.0, -30.0, 0.0], atol=RES)
     np.testing.assert_allclose(moved.bounds[1], [-40.0, -20.0, 5.0], atol=RES)
+
+
+def test_transform_triangles_applies_rigid_4x4():
+    tris = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]], np.float32)
+    t4 = np.eye(4)
+    t4[0, 3], t4[1, 3] = 10.0, -5.0  # pure translation
+    out = _transform_triangles(tris, t4)
+    np.testing.assert_allclose(
+        out[0], [[10.0, -5.0, 0.0], [11.0, -5.0, 0.0], [10.0, -4.0, 0.0]], atol=1e-5
+    )
+
+
+def test_transform_triangles_leaves_z_untouched_under_z_rotation():
+    # 90deg about Z: (x,y,z) -> (-y, x, z); Z coordinate must be preserved.
+    tris = np.array([[[1.0, 0.0, 3.0], [0.0, 1.0, 3.0], [1.0, 1.0, 7.0]]], np.float32)
+    t4 = np.eye(4)
+    t4[:2, :2] = [[0.0, -1.0], [1.0, 0.0]]
+    out = _transform_triangles(tris, t4)
+    np.testing.assert_allclose(out[0, :, 2], [3.0, 3.0, 7.0], atol=1e-5)  # Z unchanged
+
+
+def test_stl_records_unit_normal_and_verts():
+    tris = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]], np.float32)
+    rec = _stl_records(tris)
+    assert rec.shape == (1,)
+    np.testing.assert_allclose(rec["normal"][0], [0.0, 0.0, 1.0], atol=1e-6)
+    np.testing.assert_allclose(rec["verts"][0], tris[0], atol=1e-6)
+
+
+def test_stl_records_degenerate_triangle_gets_zero_normal():
+    tris = np.array([[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]], np.float32)
+    rec = _stl_records(tris)
+    np.testing.assert_allclose(rec["normal"][0], [0.0, 0.0, 0.0], atol=1e-6)
+
+
+def test_export_plates_streams_multiple_pieces_into_one_plate(tmp_path):
+    box = _box()
+    f = tmp_path / "piece.stl"
+    box.export(f)
+    _mask, origin, _ = extract_footprint(box, RES)
+    t0 = placement_transform(
+        (float(origin[0]), float(origin[1])), _identity_aff(), 0, 0, RES, PLATE
+    )
+    t1 = placement_transform(
+        (float(origin[0]), float(origin[1])), _identity_aff(), 0, 200, RES, PLATE
+    )
+    placements = [Placement(0, 0, 0, 0, 0.0), Placement(1, 0, 0, 200, 0.0)]
+    out = export_plates([f, f], placements, [t0, t1], tmp_path / "plates")
+    assert len(out) == 1
+    reloaded = trimesh.load_mesh(out[0], process=False)
+    assert len(reloaded.triangles) == 2 * len(box.triangles)  # both pieces present
+    np.testing.assert_allclose(reloaded.bounds[0], [-50.0, -30.0, 0.0], atol=RES)
+    np.testing.assert_allclose(reloaded.bounds[1], [-20.0, -20.0, 5.0], atol=RES)
+
+
+def test_export_plates_writes_exact_binary_stl(tmp_path):
+    box = _box()
+    f = tmp_path / "p.stl"
+    box.export(f)
+    _mask, origin, _ = extract_footprint(box, RES)
+    t = placement_transform((float(origin[0]), float(origin[1])), _identity_aff(), 0, 0, RES, PLATE)
+    out = export_plates([f], [Placement(0, 0, 0, 0, 0.0)], [t], tmp_path / "plates")
+    data = out[0].read_bytes()
+    n = int(np.frombuffer(data[80:84], "<u4")[0])
+    assert n == len(box.triangles)
+    assert len(data) == 84 + 50 * n  # exact binary-STL size, no ASCII fallback
+    assert read_stl_triangles(out[0]).shape == box.triangles.shape  # round-trips
+
+
+def test_export_plates_output_passes_verify_self_check(tmp_path):
+    # Full chain the CLI relies on: streaming export -> read_stl_triangles ->
+    # merged-shadow self-check must agree (0 violations) for a faithful placement.
+    box = _box()
+    f = tmp_path / "piece.stl"
+    box.export(f)
+    mask, origin, _ = extract_footprint(box, RES)
+    row = col = 100
+    t = placement_transform(
+        (float(origin[0]), float(origin[1])), _identity_aff(), row, col, RES, PLATE
+    )
+    out = export_plates([f], [Placement(0, 0, row, col, 0.0)], [t], tmp_path / "plates")
+    occ = np.zeros(PLATE_SHAPE, np.uint8)
+    occ[row : row + mask.shape[0], col : col + mask.shape[1]] |= mask
+    assert verify_plate(read_stl_triangles(out[0]), occ, RES, PLATE, 0.0) == 0
 
 
 def test_export_plates_writes_one_file_per_plate(tmp_path):

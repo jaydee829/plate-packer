@@ -5,6 +5,7 @@ from itertools import pairwise
 import numpy as np
 import pytest
 
+from plate_packer.angles import angle_candidates
 from plate_packer.improve import (
     ImproveResult,
     _move_random_reinsert,
@@ -12,14 +13,17 @@ from plate_packer.improve import (
     _move_targeted_reinsert,
     _move_targeted_swap,
     _move_window_shuffle,
+    _prerotate_multi_res,
     _reinsert,
+    _scale_placements,
+    _update_beam,
     falkenauer,
     improve,
     perturb,
     plate_fills,
     shake,
 )
-from plate_packer.packer import Placement, pack
+from plate_packer.packer import Placement, pack, rotate_mask, seed_order
 
 
 def solid(h, w):
@@ -144,12 +148,24 @@ def test_shake_returns_valid_permutation():
 PIECES = [solid(2, 2), solid(2, 2), solid(2, 2)]
 
 
-def test_improve_budget_zero_equals_plain_greedy():
-    res = improve(PIECES, (6, 6), budget_s=0.0)
-    assert res.placements == pack(PIECES, (6, 6))
+def test_improve_budget_zero_equals_greedy_seed_pack():
+    pieces = PIECES
+    res = improve(pieces, (6, 6), budget_s=0.0)
+    angles = [angle_candidates(p) for p in pieces]
+    prerot = [{a: rotate_mask(p, a)[0] for a in ang} for p, ang in zip(pieces, angles, strict=True)]
+    order = seed_order(pieces, "difficulty")
+    expected = pack(pieces, (6, 6), prerotated=prerot, order=order, validate=False)
+    assert res.placements == expected
     assert res.evaluations == 1
     assert res.improvements == 0
     assert res.fitness_initial == res.fitness_final
+
+
+def test_improve_rejects_coarse_res_below_working(monkeypatch):
+    # factor < 1 must raise a clean ValueError, not a raw ZeroDivisionError
+    # from conservative_downsample (regression: PR #6 Important #2).
+    with pytest.raises(ValueError, match="working_res_mm"):
+        improve([solid(2, 2)], (6, 6), budget_s=0.0, working_res_mm=0.1, coarse_res_mm=0.04)
 
 
 def test_improve_same_seed_same_result():
@@ -246,3 +262,136 @@ def test_improve_deterministic_for_fixed_eval_count(monkeypatch):
     a, b = run(), run()
     assert a.placements == b.placements
     assert (a.evaluations, a.improvements) == (b.evaluations, b.improvements)
+
+
+def test_update_beam_keeps_top_k_by_fitness():
+    beam = []
+    for order, fit in ([0, 1, 2], 0.3), ([2, 1, 0], 0.5), ([1, 0, 2], 0.4):
+        beam = _update_beam(beam, order, fit, k=2)
+    assert [f for f, _ in beam] == [0.5, 0.4]
+    assert [o for _, o in beam] == [[2, 1, 0], [1, 0, 2]]
+
+
+def test_update_beam_dedupes_identical_orderings():
+    beam = _update_beam([], [0, 1, 2], 0.3, k=5)
+    beam = _update_beam(beam, [0, 1, 2], 0.3, k=5)
+    assert len(beam) == 1
+
+
+def test_update_beam_keeps_best_fitness_for_repeated_ordering():
+    beam = _update_beam([], [0, 1, 2], 0.3, k=5)
+    beam = _update_beam(beam, [0, 1, 2], 0.7, k=5)
+    assert beam == [(0.7, [0, 1, 2])]
+
+
+def test_update_beam_breaks_fitness_ties_by_ordering():
+    beam = _update_beam([], [2, 1, 0], 0.5, k=5)
+    beam = _update_beam(beam, [0, 1, 2], 0.5, k=5)
+    assert [o for _, o in beam] == [[0, 1, 2], [2, 1, 0]]  # ascending tuple order
+
+
+def test_update_beam_does_not_mutate_input():
+    original = [(0.5, [2, 1, 0])]
+    _update_beam(original, [0, 1, 2], 0.9, k=5)
+    assert original == [(0.5, [2, 1, 0])]
+
+
+def test_prerotate_multi_res_keys_match_angles_at_both_resolutions():
+    pieces = [solid(3, 5)]
+    fine, coarse = _prerotate_multi_res(pieces, [[0.0, 90.0]], factor=2)
+    assert set(fine[0]) == {0.0, 90.0}
+    assert set(coarse[0]) == {0.0, 90.0}
+
+
+@pytest.mark.parametrize("angle", [0.0, 90.0, 30.0], ids=["0deg", "90deg", "30deg"])
+def test_prerotate_coarse_is_superset_of_fine(angle):
+    # Every ON pixel of the fine rotated mask must fall in an ON coarse cell
+    # (block-max grows-never-shrinks) -> coarse-legal implies fine-legal.
+    piece = np.zeros((6, 10), np.uint8)
+    piece[1:5, 2:8] = 1
+    factor = 3
+    fine, coarse = _prerotate_multi_res([piece], [[angle]], factor)
+    fm, cm = fine[0][angle], coarse[0][angle]
+    fr, fc = np.nonzero(fm)
+    assert cm[fr // factor, fc // factor].all()
+
+
+def test_prerotate_factor_one_coarse_equals_fine():
+    pieces = [solid(4, 4)]
+    fine, coarse = _prerotate_multi_res(pieces, [[0.0]], factor=1)
+    np.testing.assert_array_equal(fine[0][0.0], coarse[0][0.0])
+
+
+def test_improve_result_has_beam_field():
+    res = improve(PIECES, (6, 6), budget_s=0.0)
+    assert isinstance(res.beam, list)
+    for _coarse_fit, _fine_fit, n_plates in res.beam:
+        assert isinstance(n_plates, int)
+
+
+def test_improve_returns_best_fine_not_best_coarse():
+    # fitness_final is a FINE fitness and never below the seed's fine fitness.
+    res = improve(_WALL_PIECES, (10, 10), budget_s=0.4, patience=40, min_improvement=0.0, seed=5)
+    assert res.fitness_final >= res.fitness_initial
+
+
+def test_improve_coarse_legal_orderings_pack_legally_at_fine():
+    # Every returned placement must be collision-free at fine resolution
+    # (coarse-legal => fine-legal).
+    pieces = [solid(3, 3), solid(2, 4), solid(4, 2), solid(2, 2)]
+    res = improve(pieces, (8, 8), budget_s=0.3, patience=30, min_improvement=0.0, seed=1)
+    occ = {}
+    for p in res.placements:
+        m, _ = rotate_mask(pieces[p.piece], p.angle)
+        plate = occ.setdefault(p.plate, np.zeros((8, 8), np.uint8))
+        plate[p.row : p.row + m.shape[0], p.col : p.col + m.shape[1]] += m
+    assert all(plate.max() <= 1 for plate in occ.values())
+
+
+def test_improve_beam_size_bounded_by_beam_param():
+    res = improve(
+        _WALL_PIECES, (10, 10), budget_s=0.3, patience=40, min_improvement=0.0, seed=5, beam=3
+    )
+    assert len(res.beam) <= 3
+
+
+def test_improve_survives_coarse_growth_of_margin_frame():
+    # A near-plate-spanning piece fits the FINE empty plate but its block-max
+    # coarse variant cannot seat the coarse (margin-grown) plate. improve()
+    # must fall back to fine resolution instead of raising a misleading
+    # "does not fit" (ADR-004).
+    plate_shape = (40, 40)
+    margin = np.zeros(plate_shape, np.uint8)
+    margin[:3, :] = 1
+    margin[-3:, :] = 1
+    margin[:, :3] = 1
+    margin[:, -3:] = 1
+    piece = np.ones((34, 4), np.uint8)  # fits the 34x34 fine usable band
+    res = improve([piece], plate_shape, plate_mask=margin, budget_s=0.0)
+    assert len(res.placements) == 1
+    assert res.placements[0].plate == 0
+
+
+@pytest.mark.parametrize("scale", [1, 4], ids=["scale-1", "scale-4"])
+def test_scale_placements_scales_anchors_only(scale):
+    pls = [Placement(0, 0, 2, 3, 90.0, 5.0), Placement(1, 1, 0, 5, 0.0, 2.0)]
+    out = _scale_placements(pls, scale)
+    assert [(p.piece, p.plate, p.row, p.col, p.angle, p.contact) for p in out] == [
+        (0, 0, 2 * scale, 3 * scale, 90.0, 5.0),
+        (1, 1, 0, 5 * scale, 0.0, 2.0),
+    ]
+
+
+def test_improve_output_in_bounds_and_collision_free_nondivisible_plate():
+    # plate_shape (10, 10) is NOT a multiple of the coarse factor (4), exercising
+    # the coarse-plate padding guard: every returned placement (fine re-pack or
+    # the scaled-coarse layout) must be collision-free AND fully inside the plate.
+    pieces = [solid(3, 3), solid(2, 4), solid(4, 2), solid(3, 2), solid(2, 2)]
+    res = improve(pieces, (10, 10), budget_s=0.3, patience=30, min_improvement=0.0, seed=2)
+    occ = {}
+    for p in res.placements:
+        m, _ = rotate_mask(pieces[p.piece], p.angle)
+        assert p.row + m.shape[0] <= 10 and p.col + m.shape[1] <= 10  # in bounds
+        plate = occ.setdefault(p.plate, np.zeros((10, 10), np.uint8))
+        plate[p.row : p.row + m.shape[0], p.col : p.col + m.shape[1]] += m
+    assert all(plate.max() <= 1 for plate in occ.values())

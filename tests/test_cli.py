@@ -142,6 +142,13 @@ def test_pack_no_verify_skips(tmp_path, monkeypatch):
     assert "verify" not in result.output.lower()
 
 
+def test_pack_cli_rejects_invalid_coarse_res(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src), "--coarse-res", "0.04"])
+    assert result.exit_code != 0
+    assert not isinstance(result.exception, ZeroDivisionError)
+
+
 def test_pack_too_tall_piece_listed_and_aborts(tmp_path, monkeypatch):
     src = _setup(tmp_path, monkeypatch, boxes=((10, 10, 5), (10, 10, 60)))
     result = runner.invoke(app, ["pack", str(src)])
@@ -246,3 +253,21 @@ def test_pack_from_file_missing_list_file_errors(tmp_path, monkeypatch):
     result = runner.invoke(app, ["pack", "--from-file", str(tmp_path / "nope.txt")])
     assert result.exit_code != 0
     assert "nope.txt" in result.output
+
+
+def test_pack_cli_greedy_uses_shape_aware_angles(tmp_path, monkeypatch):
+    # A budget-0 pack still succeeds end-to-end (report written, verify ok) with
+    # the shape-aware greedy path.
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["pack", str(src), "--budget", "0"])
+    assert result.exit_code == 0, result.output
+    report = (tmp_path / "plates" / "report.txt").read_text(encoding="utf-8")
+    assert "plate(s)" in report
+
+
+def test_pack_cli_accepts_coarse_res_and_beam_options(tmp_path, monkeypatch):
+    src = _setup(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app, ["pack", str(src), "--budget", "1", "--coarse-res", "0.4", "--beam", "2"]
+    )
+    assert result.exit_code == 0, result.output
