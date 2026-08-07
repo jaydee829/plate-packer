@@ -253,6 +253,34 @@ nesting, delta-evaluation → deferred.
 `contact_map` gains `edge_weight` (plate-edge vs piece-piece contact weight,
 default 1.0 = equal). Spec: docs/superpowers/specs/2026-08-06-rotation-resolution-design.md.
 
+**Retrospective (2026-08-07, validated on the 30-piece set):** final result
+**4 plates / fine fitness 0.4801**, beating bottom-left (0.4765) and 16-rot
+contact (0.4785) — but only after two corrections and a default change:
+
+1. **Shape-aware angles alone under-deliver — the "targeted angles replace
+   uniform grids" premise only half-held.** With `safety_grid=0` the pack came
+   out at **5 plates / 0.3497**: the 30 pieces averaged only 4.7 shape-aware
+   angles each (5 circular bases got just 1), far short of the ~16 rotations
+   contact scoring needs. The uniform `safety_grid` backstop does the heavy
+   lifting; shape-aware angles are a *supplement*, not a replacement.
+   **`safety_grid` default flipped 0 → 16** so the tool performs out of the box
+   (with `angle_cap=12`, safety_grid=16 → ~8 distinct mod-180 uniform angles
+   unioned with shape-aware, capped to 12). This partly re-opens the ADR-011
+   "contact vs bottom-left" question: contact only wins with enough rotations.
+2. **The fine stage lost a plate by re-packing instead of realizing the coarse
+   layout** (coarse fit 4, fine re-pack spilled to 5). Fixed: the fine stage now
+   also realizes the coarse layout (`_scale_placements`, anchors × factor —
+   collision-free/in-bounds by the block-max superset property + a coarse-plate
+   padding guard) and keeps the better of {fine re-pack, realized-coarse}. See
+   bugs.md 2026-08-07. **General lesson:** a multi-resolution search must
+   *realize* the coarse solution, not rank orderings and re-solve at fine.
+3. **Export OOMed at production scale** (trimesh float64 caches on a ~3.9M-tri
+   plate) — rewrote `export_plates` to stream the binary STL per piece. bugs.md.
+
+Deferred/next: shape-aware angles' marginal value over pure uniform is now
+questionable — a future pass could measure whether they add anything beyond the
+safety grid, and revisit `angle_cap` given safety_grid is on by default.
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal

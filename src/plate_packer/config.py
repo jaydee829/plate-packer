@@ -26,7 +26,7 @@ class PackConfig:
     beam: int = 5
     angle_cap: int = 12
     min_edge_frac: float = 0.1
-    safety_grid: int = 0
+    safety_grid: int = 16  # uniform-rotation backstop unioned with shape-aware angles (ADR-012)
     edge_contact_weight: float = 1.0
     ordering: str = "difficulty"
 

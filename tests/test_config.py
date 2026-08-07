@@ -148,7 +148,7 @@ def test_config_defaults_include_coarse_to_fine_knobs(tmp_path):
     assert cfg.beam == 5
     assert cfg.angle_cap == 12
     assert cfg.min_edge_frac == 0.1
-    assert cfg.safety_grid == 0
+    assert cfg.safety_grid == 16  # uniform-rotation backstop on by default (2026-08-07 benchmark)
     assert cfg.edge_contact_weight == 1.0
     assert cfg.ordering == "difficulty"
 
