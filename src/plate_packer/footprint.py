@@ -112,6 +112,9 @@ def extract_footprints(mesh, res_mm: float, cut_cap_mm: float):
         z0 = float(tris[:, :, 2].min())
         keep = tris[:, :, 2].max(axis=1) > z0 + cut_mm
         body_mask = _raster(tri_px[keep], shape)
+        if not body_mask.any():  # nothing survives the cut -> don't cut
+            body_mask = full_mask.copy()
+            cut_mm = 0.0
     t_raster = time.perf_counter() - t0
 
     stats = {

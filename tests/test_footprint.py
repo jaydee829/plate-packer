@@ -130,3 +130,17 @@ def test_extract_footprints_no_cut_gives_identical_body():
     full, body, _origin, cut, _stats = extract_footprints(mesh, RES, 5.0)
     assert cut == 0.0
     assert (body == full).all()
+
+
+def test_extract_footprints_falls_back_when_cut_would_empty_body():
+    """Raft-only input (whole model shorter than cut_cap_mm): detect_base_cut fires
+    a cut equal to the model's own top (its footprint-area knee sits at its own
+    apex, since nothing exists above it), which would leave zero kept triangles
+    and an empty body_mask. extract_footprints must fall back to no cut instead
+    of propagating an empty mask (downstream rotate_mask cannot crop one)."""
+    mesh = _box((20, 20), 0, 2)  # no body above the raft at all
+    full, body, _origin, cut, stats = extract_footprints(mesh, RES, 5.0)
+    assert cut == 0.0
+    assert stats["cut_mm"] == 0.0
+    assert body.any()
+    assert (body == full).all()
