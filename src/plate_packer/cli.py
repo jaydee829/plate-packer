@@ -197,6 +197,7 @@ def pack_command(
                     detector_version=DETECTOR_VERSION,
                 )
             doc = load_doc(fp_dir, sha)
+            body_ok = True
             if cfg.support_aware and (
                 doc.body_mask is None or doc.detector_version != DETECTOR_VERSION
             ):
@@ -218,6 +219,7 @@ def pack_command(
                     doc = load_doc(fp_dir, sha)
                 except Exception as e:
                     typer.echo(f"  {f.name}: body-mask extraction failed ({e}); using full shadow")
+                    body_ok = False
             if doc.z_height_mm > cfg.build_height_mm:
                 errors.append(
                     (
@@ -227,7 +229,7 @@ def pack_command(
                     )
                 )
                 continue
-            use_body = cfg.support_aware and doc.body_mask is not None
+            use_body = cfg.support_aware and doc.body_mask is not None and body_ok
             pack_kind = "model_body" if use_body else "full_shadow"
             mask, origin = prepare_mask(doc, cfg.spacing_mm, res, kind=pack_kind)
             if use_body:

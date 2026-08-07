@@ -325,6 +325,63 @@ def test_pack_self_check_passes(tmp_path, support_aware):
     assert (tmp_path / "out" / "plate_01.stl").exists()
 
 
+def test_pack_support_aware_stale_detector_version_falls_back_to_full_shadow(tmp_path, monkeypatch):
+    """Regression: when a doc is stale (detector_version mismatch) but still has
+    an old body_mask, and re-extraction fails, the piece must fall back to the
+    full shadow rather than silently packing the stale body mask."""
+    import plate_packer.cli as cli_mod
+    from plate_packer.footprint import extract_footprints
+    from plate_packer.footprint_io import file_sha256, save_doc
+
+    stl_dir = tmp_path / "stls"
+    _write_pieces(stl_dir, 1)
+    piece = next(stl_dir.glob("*.stl"))
+    fp = tmp_path / "fp"
+    sha = file_sha256(piece)
+
+    # Pre-seed a doc that has_current_doc() considers current (schema_version
+    # only) but whose detector_version is stale, with an old body_mask still
+    # present -- the exact condition the review finding was about.
+    full, body, origin, cut, stats = extract_footprints(cli_mod.load_piece_mesh(piece), 0.05, 4.0)
+    save_doc(
+        fp,
+        sha,
+        full,
+        origin,
+        stats,
+        res_mm_per_px=0.05,
+        body_mask=body,
+        cut_z_mm=cut,
+        detector_version=0,  # stale: real DETECTOR_VERSION is 1
+    )
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated extraction failure")
+
+    monkeypatch.setattr(cli_mod, "extract_footprints", _boom)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "pack",
+            str(stl_dir),
+            "--config",
+            str(_cfg(tmp_path, True)),
+            "--footprints-dir",
+            str(fp),
+            "--out",
+            str(tmp_path / "out"),
+            "--budget",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "body-mask extraction failed" in result.output
+    assert "using full shadow" in result.output
+    assert "verify" in result.output
+    assert "FAILED" not in result.output
+
+
 def test_pack_support_aware_writes_body_mask(tmp_path):
     stl_dir = tmp_path / "stls"
     _write_pieces(stl_dir, 1)
