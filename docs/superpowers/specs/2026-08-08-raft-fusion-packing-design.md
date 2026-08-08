@@ -65,6 +65,20 @@ Permitted-overlap matrix (F = fused, N = non-fused):
 | **F raft** | ✓ | ✓ (fuse) | ✗ |
 | **N full** | ✗ | ✗ | ✗ |
 
+The nesting permission is justified **per piece**, not per raster: what makes
+body-over-raft acceptable is that the piece carries a gate-accepted cut (its
+below-raft-top material is disposable), a physical property independent of
+rotation angle. The per-raster body/full split only decides which pixels are
+*hard* for others — and wherever the split collapses (body == full at some
+angle's raster), the fused branch tests the whole full against fused bodies,
+which is strictly harsher than the split raster (full ⊇ body). Collapse is
+therefore monotone-conservative per angle: it can remove placements, never
+admit new ones (pinned by
+`test_fusion_collapsed_angle_is_stricter_not_permissive`; probed exhaustively
+against random occupancies in PR #10 review). A false-fused flag is
+impossible — identical body/full inputs stay identical through deterministic
+downsampling and rotation.
+
 Coarse-resolution note (improve loop): block-max downsampling can collapse a
 thin raft ring so coarse body == coarse full → the piece is treated as
 non-fused at coarse res. Strictly conservative, so "coarse-legal ⇒ fine-legal"
