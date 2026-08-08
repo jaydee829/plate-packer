@@ -565,3 +565,49 @@ def test_boundary_body_may_not_overlap_another_raft():
         else:
             occ_body_A[pl.row : pl.row + 20, pl.col : pl.col + 20] |= A_full
     assert (occ_body_A & occ_raft_B).sum() == 0  # A's body must not sit on B's raft
+
+
+def test_fusion_body_may_nest_over_fused_raft():
+    """ADR-015: two gate-accepted (fused) pieces may overlap fulls as long as
+    their BODIES stay disjoint -- A's body nests over B's raft and vice versa.
+    On a plate exactly one canvas wide, both must land at the same anchor,
+    which strict two-mask packing (full-vs-body) would spill to a new plate."""
+    full = np.ones((20, 20), np.uint8)
+    a_body = np.zeros((20, 20), np.uint8)
+    a_body[:, 16:] = 1  # body on the right; raft = left 16 cols
+    b_body = np.zeros((20, 20), np.uint8)
+    b_body[:, :4] = 1  # body on the left; raft = right 16 cols
+    av, af = _paired_variants(full, a_body, [0.0])
+    bv, bf = _paired_variants(full, b_body, [0.0])
+    placements = pack(
+        [a_body, b_body],
+        (20, 20),
+        prerotated=[av, bv],
+        boundary=[af, bf],
+        order=[0, 1],
+        validate=False,
+    )
+    assert max(p.plate for p in placements) == 0  # nested onto ONE plate
+    occ = np.zeros((20, 20), np.uint8)
+    for pl in placements:
+        body = [a_body, b_body][pl.piece]
+        assert (occ[pl.row : pl.row + 20, pl.col : pl.col + 20] & body).sum() == 0
+        occ[pl.row : pl.row + 20, pl.col : pl.col + 20] |= body
+
+
+def test_fusion_bodies_still_collide():
+    """ADR-015: fused pieces' BODIES never overlap -- two center-body pieces
+    cannot share a one-anchor plate, so the second spills."""
+    full = np.ones((20, 20), np.uint8)
+    body = np.zeros((20, 20), np.uint8)
+    body[:, 8:12] = 1
+    bv, fv = _paired_variants(full, body, [0.0])
+    placements = pack(
+        [body, body],
+        (20, 20),
+        prerotated=[bv, bv],
+        boundary=[fv, fv],
+        order=[0, 1],
+        validate=False,
+    )
+    assert max(p.plate for p in placements) == 1
