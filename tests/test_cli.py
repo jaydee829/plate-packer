@@ -357,7 +357,7 @@ def test_pack_support_aware_stale_detector_version_falls_back_to_full_shadow(tmp
         res_mm_per_px=0.05,
         body_mask=body,
         cut_z_mm=cut,
-        detector_version=0,  # stale: real DETECTOR_VERSION is 1
+        detector_version=0,  # stale: any value != footprint.DETECTOR_VERSION
     )
 
     def _boom(*args, **kwargs):
@@ -406,8 +406,10 @@ def test_pack_support_aware_writes_body_mask(tmp_path):
             "0",
         ],
     )
+    from plate_packer.footprint import DETECTOR_VERSION
     from plate_packer.footprint_io import file_sha256, load_doc
 
     doc = load_doc(fp, file_sha256(next(stl_dir.glob("*.stl"))))
     assert doc.body_mask is not None
-    assert doc.detector_version == 1
+    assert doc.detector_version == DETECTOR_VERSION
+    assert DETECTOR_VERSION == 2  # gate added 2026-08-08: stale v1 body masks must regenerate

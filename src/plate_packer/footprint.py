@@ -15,7 +15,7 @@ BAND_MM = 0.25  # Z step for the cut-depth sweep
 MIN_REDUCTION = 0.05  # min footprint drop (fraction) worth excluding a base for
 FLAT_EPS = 0.01  # plateau tolerance (fraction of footprint) for the knee
 DETECT_RES_MM = 0.2  # coarse raster res for detection (area ratios are scale-tolerant)
-DETECTOR_VERSION = 1  # bump when any detector constant changes (invalidates body masks)
+DETECTOR_VERSION = 2  # bump when any detector constant changes (v2: band-dominance gate)
 RAFT_BAND_DOMINANCE_MAX = 0.35  # accept a cut iff largest band component <= 35% of band
 
 
