@@ -60,6 +60,11 @@ This file tracks project bugs, their root causes, solutions, and prevention stra
 - **Solution**: `uv run ruff format <file>` on the plan doc (commit 68b6cc7).
 - **Prevention**: Run the format check before committing ANY file containing python fences, including docs/ markdown; or format plan docs at write time.
 
+### 2026-08-08 - corpus labels and band-area dead end (raft-signature gate)
+- Filename-derived labels lied: 7 publisher supported exports lack "supported" in the name (`STL_Pose1_Body.stl` etc.). Population splits by filename need signature-level verification.
+- Band *area fraction* failed as a raft discriminator (hollow shells: wall rings as sparse as pillar forests); component *dominance* separates 2.7×. Lesson: calibrate on the real corpus before trusting a physically-plausible metric.
+- `trimesh.creation.cone` can't test taper false-knees: every side triangle reaches the apex so the reach map never drops. Use stacked shrinking boxes.
+
 ### 2026-08-01 - Typer single-command app made tests pass locally, fail on CI
 - **Issue**: All 5 CLI tests exited 2 (usage error) on CI while passing locally; e2e had "verified" the CLI.
 - **Root Cause**: `typer.Typer()` with exactly one registered command collapses it into the root command, so the token `footprints` was parsed as the first `paths` argument. Locally it passed by accident: the gitignored `./footprints/` output dir existed in cwd, satisfying `exists=True`.

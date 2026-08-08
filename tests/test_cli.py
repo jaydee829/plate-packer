@@ -274,16 +274,21 @@ def test_pack_cli_accepts_coarse_res_and_beam_options(tmp_path, monkeypatch):
 
 
 def _fused_piece():
-    """Solid raft (full outline) + a narrower body with the SAME outer bbox but a
-    hollow centre — realistic: outer extent matches, interior differs. Rafts of
-    neighbours overlap; nothing hangs off the plate."""
-    raft = trimesh.creation.box(extents=(20, 20, 2))
-    raft.apply_translation([0, 0, 1])
-    left = trimesh.creation.box(extents=(4, 20, 20))
-    left.apply_translation([-8, 0, 12])
-    right = trimesh.creation.box(extents=(4, 20, 20))
-    right.apply_translation([8, 0, 12])
-    return trimesh.util.concatenate([raft, left, right])
+    """Solid raft (full outline) + 8 support pillars + a narrower body slab —
+    realistic: outer extent matches the raft, body shadow is smaller. Rafts of
+    neighbours overlap; nothing hangs off the plate. The pillar forest keeps
+    the band-dominance gate accepting the cut (8 rings, dominance 1/8)."""
+    pillars = [(-7, -7), (-7, 0), (-7, 7), (0, -7), (0, 7), (7, -7), (7, 0), (7, 7)]
+    parts = [trimesh.creation.box(extents=(20, 20, 2))]
+    parts[0].apply_translation([0, 0, 1])
+    for x, y in pillars:
+        p = trimesh.creation.box(extents=(1, 1, 6))
+        p.apply_translation([x, y, 5])
+        parts.append(p)
+    body = trimesh.creation.box(extents=(10, 10, 4))
+    body.apply_translation([0, 0, 10])
+    parts.append(body)
+    return trimesh.util.concatenate(parts)
 
 
 def _write_pieces(stl_dir, n):
@@ -352,7 +357,7 @@ def test_pack_support_aware_stale_detector_version_falls_back_to_full_shadow(tmp
         res_mm_per_px=0.05,
         body_mask=body,
         cut_z_mm=cut,
-        detector_version=0,  # stale: real DETECTOR_VERSION is 1
+        detector_version=0,  # stale: any value != footprint.DETECTOR_VERSION
     )
 
     def _boom(*args, **kwargs):
@@ -401,8 +406,10 @@ def test_pack_support_aware_writes_body_mask(tmp_path):
             "0",
         ],
     )
+    from plate_packer.footprint import DETECTOR_VERSION
     from plate_packer.footprint_io import file_sha256, load_doc
 
     doc = load_doc(fp, file_sha256(next(stl_dir.glob("*.stl"))))
     assert doc.body_mask is not None
-    assert doc.detector_version == 1
+    assert doc.detector_version == DETECTOR_VERSION
+    assert DETECTOR_VERSION == 2  # gate added 2026-08-08: stale v1 body masks must regenerate

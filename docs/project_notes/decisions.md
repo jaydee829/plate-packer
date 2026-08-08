@@ -319,6 +319,25 @@ safety grid, and revisit `angle_cap` given safety_grid is on by default.
 - Pros: 14–32% real measured footprint reduction on `*_supported.stl` from the Tome of Demons corpus; interior concavity gain (real rafts hug outline at 0.0 mm outer flare). Raft fusion acceptable; pieces still print successfully.
 - Trade-offs: Requires correct STL mesh connectivity (non-manifold rafts may fail silently). v2 will add per-band exclusion for deeper overhangs. Detector evolution was hypothesis-driven (area-cliff, horizontal-cap tried first); see bugs.md 2026-08-07 for float32 precision discovery. Spec: `docs/superpowers/specs/2026-08-07-support-aware-footprints-design.md`.
 
+### ADR-014: Raft-signature gate (band-dominance acceptance) (2026-08-08)
+
+**Context:**
+- The two-mask collision model (ADR-013) confines overlap to raft∩raft, but is only as safe as classification: the area-knee detector fires on any mesh whose shadow shrinks ≥5% within the cap and plateaus — including 13 unsupported corpus meshes (wings on a tip, merged cloth; all cap-adjacent knees) and hypothetical integral plinths. A bogus cut opts model geometry into raft fusion.
+
+**Decision:**
+- Accept a knee only if the geometry just above it looks like a support forest: rasterize triangles straddling `z0 + cut + BAND_MM` (cross-section outlines) and require largest-component/band-area ≤ `RAFT_BAND_DOMINANCE_MAX = 0.35`; empty band ⇒ reject. Module constant, not config (ADR-009 hash-addressability). `DETECTOR_VERSION` 1→2. `detect_base_cut(..., gated=False)` exposes the raw knee for probing (`tools/probe_raft_gate.py`).
+- Corpus calibration (Tome of Demons, 229 STLs): true rafts dominance 0.018–0.208 (n=101, knees 0.25–1.25 mm), bogus cuts 0.556–1.0 (n=13, knees 4.5–5.0 mm) — 2.7× gap around 0.35. Gate: 101 accepts / 13 rejects, exact.
+
+**Alternatives Considered:**
+- Band *area fraction* (straddle area / footprint) → does NOT separate: meshes are hollow shells, so a wing's wall ring is as sparse by area (0.02–0.08) as a support forest. Dominance measures connectedness — the actual physical difference — and is scale-free.
+- `raft_window_mm` accept-window on knee depth → redundant (deep knees are exactly the high-dominance ones) and cannot catch a shallow plinth.
+- Filename allowlist (`*supported*`) → corpus has 7 supported exports missing the suffix; naming is unreliable.
+
+**Consequences:**
+- False rejects (few-pillar minis; corpus min is 22 components) cost density only, never correctness. Remaining false-accept shape — a field of separate thin spikes off the plate — is physically raft-like; accepted risk.
+- Underlying mechanism of both failure directions: the band is the *XY shadow* of straddling triangles, not a true planar cross-section. Sloped geometry (tapered support necks, diagonal struts) inflates/merges components → false reject, the safe direction; a near-horizontal patch that happens to straddle the plane (spread hand, crown tips) contributes an isolated small blob instead of a slice → the concrete false-accept path. Well-separated on Tome of Demons' vertical pillar forests (2.7× gap); recheck via `tools/probe_raft_gate.py` on corpora with more organic/sloped supports. Opt-in regression: `test_raft_gate_verdict_on_real_corpus` (`-m example_stls`) pins 2 accept + 2 reject verdicts on named corpus files.
+- Smooth synthetic tapers (e.g. `trimesh.creation.cone`) never fire the knee at all (every side triangle reaches the apex, so the reach map never drops); fine-tessellated real tapers do. Synthetic taper tests must use stacked shrinking boxes.
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal

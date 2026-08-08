@@ -71,10 +71,10 @@ def test_stacked_boxes_shadow_unions():
     assert mask.mean() > 0.97
 
 
-def _box(xy, z_lo, z_hi):
+def _box(xy, z_lo, z_hi, center=(0, 0)):
     """Axis-aligned box with XY extents `xy`, spanning Z [z_lo, z_hi]."""
     b = trimesh.creation.box(extents=(xy[0], xy[1], z_hi - z_lo))
-    b.apply_translation([0, 0, (z_lo + z_hi) / 2])
+    b.apply_translation([center[0], center[1], (z_lo + z_hi) / 2])
     return b
 
 
@@ -82,24 +82,74 @@ def _tris(*boxes):
     return trimesh.util.concatenate(list(boxes)).triangles
 
 
+# 8 pillar positions inside a 20x20 raft: a synthetic support forest whose
+# straddle band is 8 equal rings (dominance 1/8, well under the gate).
+PILLARS = [(-7, -7), (-7, 0), (-7, 7), (0, -7), (0, 7), (7, -7), (7, 0), (7, 7)]
+
+
 @pytest.mark.parametrize(
     ("tris", "expected"),
     [
-        pytest.param(_tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)), 2.0, id="raft-then-pillar"),
-        pytest.param(_tris(_box((1, 1), 0, 12)), 0.0, id="pillar-only-no-base"),
-        pytest.param(_tris(_box((20, 20), 0, 12)), 0.0, id="wide-solid-no-drop"),
         pytest.param(
-            _tris(_box((20, 20), 0, 8), _box((1, 1), 8, 18)), 0.0, id="base-past-cap-window"
-        ),
-        pytest.param(
-            _tris(_box((2, 2), 0, 0.5), _box((1, 1), 0.5, 8), _box((20, 20), 8, 10)),
-            0.0,
-            id="tiny-foot-below-min-base-frac",
+            _tris(_box((20, 20), 0, 2), *[_box((1, 1), 2, 12, c) for c in PILLARS]),
+            2.0,
+            id="raft-then-pillar-forest",
         ),
     ],
 )
 def test_detect_base_cut(tris, expected):
     assert detect_base_cut(tris, 0.1, 5.0) == pytest.approx(expected, abs=BAND_MM)
+
+
+@pytest.mark.parametrize(
+    "tris",
+    [
+        pytest.param(
+            _tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)),
+            id="single-pillar-band-is-one-component-gate-rejects",
+        ),
+        pytest.param(
+            _tris(_box((30, 30), 0, 2), _box((10, 10), 2, 10)),
+            id="plinth-wall-ring-gate-rejects",
+        ),
+        pytest.param(
+            _tris(*[_box((30 - 2 * k, 30 - 2 * k), k, k + 1) for k in range(8)]),
+            id="staircase-taper-knee-at-cap-gate-rejects",
+        ),
+        pytest.param(
+            _tris(_box((20, 20), 0, 1), _box((10, 10), 5, 8)),
+            id="floating-body-empty-band-gate-rejects",
+        ),
+        pytest.param(_tris(_box((1, 1), 0, 12)), id="pillar-only-no-base"),
+        pytest.param(_tris(_box((20, 20), 0, 12)), id="wide-solid-no-drop"),
+        pytest.param(_tris(_box((20, 20), 0, 8), _box((1, 1), 8, 18)), id="base-past-cap-window"),
+        pytest.param(
+            _tris(_box((2, 2), 0, 0.5), _box((1, 1), 0.5, 8), _box((20, 20), 8, 10)),
+            id="tiny-foot-below-min-base-frac",
+        ),
+    ],
+)
+def test_detect_base_cut_rejects(tris):
+    assert detect_base_cut(tris, 0.1, 5.0) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("tris", "expected_knee"),
+    [
+        pytest.param(_tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)), 2.0, id="single-pillar"),
+        pytest.param(_tris(_box((30, 30), 0, 2), _box((10, 10), 2, 10)), 2.0, id="plinth"),
+        pytest.param(
+            _tris(*[_box((30 - 2 * k, 30 - 2 * k), k, k + 1) for k in range(8)]),
+            5.0,
+            id="staircase-taper",
+        ),
+        pytest.param(_tris(_box((20, 20), 0, 1), _box((10, 10), 5, 8)), 1.0, id="floating-body"),
+    ],
+)
+def test_detect_base_cut_ungated_still_finds_knee(tris, expected_knee):
+    """gated=False exposes the raw area-knee: proves the gate (not MIN_REDUCTION)
+    is what rejects these shapes in test_detect_base_cut_rejects above."""
+    assert detect_base_cut(tris, 0.1, 5.0, gated=False) == pytest.approx(expected_knee, abs=BAND_MM)
 
 
 def test_detect_base_cut_zero_cap_returns_zero():
@@ -116,7 +166,9 @@ def test_extract_footprints_full_matches_extract_footprint():
 
 
 def test_extract_footprints_body_subset_of_full_and_smaller():
-    mesh = trimesh.util.concatenate([_box((20, 20), 0, 2), _box((1, 1), 2, 12)])
+    mesh = trimesh.util.concatenate(
+        [_box((20, 20), 0, 2)] + [_box((1, 1), 2, 12, c) for c in PILLARS]
+    )
     full, body, _origin, cut, stats = extract_footprints(mesh, RES, 5.0)
     assert full.shape == body.shape
     assert (body & ~full).sum() == 0  # body is a subset of full
@@ -133,11 +185,11 @@ def test_extract_footprints_no_cut_gives_identical_body():
 
 
 def test_extract_footprints_falls_back_when_cut_would_empty_body():
-    """Raft-only input (whole model shorter than cut_cap_mm): detect_base_cut fires
-    a cut equal to the model's own top (its footprint-area knee sits at its own
-    apex, since nothing exists above it), which would leave zero kept triangles
-    and an empty body_mask. extract_footprints must fall back to no cut instead
-    of propagating an empty mask (downstream rotate_mask cannot crop one)."""
+    """Raft-only input (whole model shorter than cut_cap_mm): the band gate
+    rejects the knee first (nothing straddles above the model's own top), so
+    detect returns 0.0 and body == full. The empty-body fallback inside
+    extract_footprints stays as defense-in-depth behind the gate; this pins
+    the observable contract: no cut, non-empty body identical to full."""
     mesh = _box((20, 20), 0, 2)  # no body above the raft at all
     full, body, _origin, cut, stats = extract_footprints(mesh, RES, 5.0)
     assert cut == 0.0
