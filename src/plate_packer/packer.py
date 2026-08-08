@@ -176,6 +176,9 @@ def _best_spot_bounded(
         if body.shape[0] > body_occ.shape[0] or body.shape[1] > body_occ.shape[1]:
             continue
         if is_fused:
+            # body ⊆ full (rotate_pair shared-canvas contract): the full-vs-
+            # full_nf term is what excludes this candidate's BODY from placed
+            # non-fused fulls -- independently rotated masks would open a hole.
             legal = (
                 legal_placement_map(body_occ, body)
                 & legal_placement_map(full_nf_occ, full)

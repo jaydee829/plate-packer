@@ -556,15 +556,33 @@ def test_boundary_body_may_not_overlap_another_raft():
     placements = pack(
         [B_body, A_full], plate, prerotated=prerot, boundary=bound, order=[0, 1], validate=False
     )
-    B_raft = B_full & ~B_body
-    occ_raft_B = np.zeros(plate, np.uint8)
+    occ_full_B = np.zeros(plate, np.uint8)
     occ_body_A = np.zeros(plate, np.uint8)
     for pl in placements:
         if pl.piece == 0:
-            occ_raft_B[pl.row : pl.row + 20, pl.col : pl.col + 20] |= B_raft
+            occ_full_B[pl.row : pl.row + 20, pl.col : pl.col + 20] |= B_full
         else:
             occ_body_A[pl.row : pl.row + 20, pl.col : pl.col + 20] |= A_full
-    assert (occ_body_A & occ_raft_B).sum() == 0  # A's body must not sit on B's raft
+    # A (non-fused) must clear B's ENTIRE full -- raft and body alike
+    assert (occ_body_A & occ_full_B).sum() == 0
+
+
+def test_fusion_two_nonfused_fulls_still_collide():
+    """ADR-015 regression pin: two solid (non-fused) pieces through the
+    boundary path must keep strict full-shadow collision -- a one-anchor plate
+    forces the second to spill. Guards full_all_occ against dropping non-fused
+    fulls (the ADR-013 missing-ordered-pair failure shape)."""
+    solid = np.ones((20, 20), np.uint8)
+    v = {0.0: solid}
+    placements = pack(
+        [solid, solid],
+        (20, 20),
+        prerotated=[v, v],
+        boundary=[v, v],
+        order=[0, 1],
+        validate=False,
+    )
+    assert max(p.plate for p in placements) == 1
 
 
 def test_fusion_body_may_nest_over_fused_raft():
