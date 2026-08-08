@@ -97,6 +97,15 @@ difference, and is scale-free — no dependence on model size or resolution.
   35% — e.g. a dense field of separate thin spikes growing straight from the
   plate. Physically raft-like enough that fusion damage is marginal; noted,
   not defended against in v1.
+- **Mechanism behind both (PR #9 review):** the band rasterizes the *XY
+  shadow* of straddling triangles, not a true planar cross-section. Sloped
+  geometry (tapered necks, diagonal struts) inflates and merges components —
+  pushing toward reject, the safe direction. A near-horizontal model patch
+  that straddles the plane (spread hand, crown tips) lands as one small
+  isolated blob rather than a slice — the concrete false-accept path. The
+  Tome corpus's near-vertical pillar forests separate cleanly (2.7× gap);
+  corpora with more organic/sloped supports should be re-probed before
+  trusting 0.35.
 
 ## Testing
 

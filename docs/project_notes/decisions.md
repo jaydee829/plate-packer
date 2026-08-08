@@ -335,6 +335,7 @@ safety grid, and revisit `angle_cap` given safety_grid is on by default.
 
 **Consequences:**
 - False rejects (few-pillar minis; corpus min is 22 components) cost density only, never correctness. Remaining false-accept shape — a field of separate thin spikes off the plate — is physically raft-like; accepted risk.
+- Underlying mechanism of both failure directions: the band is the *XY shadow* of straddling triangles, not a true planar cross-section. Sloped geometry (tapered support necks, diagonal struts) inflates/merges components → false reject, the safe direction; a near-horizontal patch that happens to straddle the plane (spread hand, crown tips) contributes an isolated small blob instead of a slice → the concrete false-accept path. Well-separated on Tome of Demons' vertical pillar forests (2.7× gap); recheck via `tools/probe_raft_gate.py` on corpora with more organic/sloped supports. Opt-in regression: `test_raft_gate_verdict_on_real_corpus` (`-m example_stls`) pins 2 accept + 2 reject verdicts on named corpus files.
 - Smooth synthetic tapers (e.g. `trimesh.creation.cone`) never fire the knee at all (every side triangle reaches the apex, so the reach map never drops); fine-tessellated real tapers do. Synthetic taper tests must use stacked shrinking boxes.
 
 ## Usage Tips
