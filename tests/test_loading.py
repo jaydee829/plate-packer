@@ -130,3 +130,41 @@ def test_prepare_mask_never_aliases_the_cached_doc():
     out, _ = prepare_mask(doc, spacing_mm=0.0, working_res_mm=CANONICAL_RES_MM)
     out[0, 0] = 0
     assert doc.masks[0][0, 0] == 1
+
+
+def _doc(full, body=None):
+    return FootprintDoc(
+        sha="a" * 64,
+        res_mm_per_px=0.05,
+        origin_mm=(-1.0, -2.0),
+        z_height_mm=5.0,
+        triangles=1,
+        dropped_nonfinite=0,
+        masks=[full],
+        body_mask=body,
+        cut_z_mm=2.0 if body is not None else None,
+        detector_version=1 if body is not None else None,
+    )
+
+
+def test_prepare_mask_defaults_to_full_shadow():
+    full = np.ones((10, 10), np.uint8)
+    body = np.zeros((10, 10), np.uint8)
+    body[3:7, 3:7] = 1
+    mask, _origin = prepare_mask(_doc(full, body), 0.0, 0.1)  # kind defaults full
+    assert mask.sum() == full[::2, ::2].sum()  # downsample of full, not body
+
+
+def test_prepare_mask_selects_body():
+    full = np.ones((10, 10), np.uint8)
+    body = np.zeros((10, 10), np.uint8)
+    body[2:8, 2:8] = 1
+    full_mask, origin_full = prepare_mask(_doc(full, body), 0.0, 0.1, kind="full_shadow")
+    body_mask, origin_body = prepare_mask(_doc(full, body), 0.0, 0.1, kind="model_body")
+    assert body_mask.sum() < full_mask.sum()
+    assert origin_full == origin_body  # same origin regardless of kind
+
+
+def test_prepare_mask_body_absent_raises():
+    with pytest.raises(ValueError, match="model_body"):
+        prepare_mask(_doc(np.ones((10, 10), np.uint8), body=None), 0.0, 0.1, kind="model_body")

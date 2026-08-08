@@ -202,3 +202,25 @@ def test_config_rejects_invalid_coarse_to_fine_knobs(tmp_path, key, match):
     p.write_text(f"[packing]\n{key}\n", encoding="utf-8")
     with pytest.raises(ValueError, match=match):
         load_config(p)
+
+
+def test_support_defaults(tmp_path):
+    cfg = load_config(tmp_path / "missing.toml")
+    assert cfg.support_aware is False
+    assert cfg.support_cut_cap_mm == 5.0
+
+
+def test_support_knobs_load_from_toml(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("[packing]\nsupport_aware = true\nsupport_cut_cap_mm = 3.0\n", encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.support_aware is True
+    assert cfg.support_cut_cap_mm == 3.0
+
+
+@pytest.mark.parametrize("value", [pytest.param("0", id="zero"), pytest.param("-1", id="negative")])
+def test_support_cut_cap_must_be_positive(tmp_path, value):
+    p = tmp_path / "config.toml"
+    p.write_text(f"[packing]\nsupport_cut_cap_mm = {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="support_cut_cap_mm"):
+        load_config(p)

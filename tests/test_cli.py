@@ -271,3 +271,138 @@ def test_pack_cli_accepts_coarse_res_and_beam_options(tmp_path, monkeypatch):
         app, ["pack", str(src), "--budget", "1", "--coarse-res", "0.4", "--beam", "2"]
     )
     assert result.exit_code == 0, result.output
+
+
+def _fused_piece():
+    """Solid raft (full outline) + a narrower body with the SAME outer bbox but a
+    hollow centre — realistic: outer extent matches, interior differs. Rafts of
+    neighbours overlap; nothing hangs off the plate."""
+    raft = trimesh.creation.box(extents=(20, 20, 2))
+    raft.apply_translation([0, 0, 1])
+    left = trimesh.creation.box(extents=(4, 20, 20))
+    left.apply_translation([-8, 0, 12])
+    right = trimesh.creation.box(extents=(4, 20, 20))
+    right.apply_translation([8, 0, 12])
+    return trimesh.util.concatenate([raft, left, right])
+
+
+def _write_pieces(stl_dir, n):
+    stl_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        _fused_piece().export(str(stl_dir / f"piece_{i}.stl"))
+
+
+def _cfg(tmp_path, support_aware):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        f"[packing]\nsupport_aware = {'true' if support_aware else 'false'}\n", encoding="utf-8"
+    )
+    return p
+
+
+@pytest.mark.parametrize("support_aware", [False, True], ids=["off", "on"])
+def test_pack_self_check_passes(tmp_path, support_aware):
+    stl_dir = tmp_path / "stls"
+    _write_pieces(stl_dir, 2)
+    result = CliRunner().invoke(
+        app,
+        [
+            "pack",
+            str(stl_dir),
+            "--config",
+            str(_cfg(tmp_path, support_aware)),
+            "--footprints-dir",
+            str(tmp_path / "fp"),
+            "--out",
+            str(tmp_path / "out"),
+            "--budget",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "verify" in result.output
+    assert "FAILED" not in result.output
+    assert (tmp_path / "out" / "plate_01.stl").exists()
+
+
+def test_pack_support_aware_stale_detector_version_falls_back_to_full_shadow(tmp_path, monkeypatch):
+    """Regression: when a doc is stale (detector_version mismatch) but still has
+    an old body_mask, and re-extraction fails, the piece must fall back to the
+    full shadow rather than silently packing the stale body mask."""
+    import plate_packer.cli as cli_mod
+    from plate_packer.footprint import extract_footprints
+    from plate_packer.footprint_io import file_sha256, save_doc
+
+    stl_dir = tmp_path / "stls"
+    _write_pieces(stl_dir, 1)
+    piece = next(stl_dir.glob("*.stl"))
+    fp = tmp_path / "fp"
+    sha = file_sha256(piece)
+
+    # Pre-seed a doc that has_current_doc() considers current (schema_version
+    # only) but whose detector_version is stale, with an old body_mask still
+    # present -- the exact condition the review finding was about.
+    full, body, origin, cut, stats = extract_footprints(cli_mod.load_piece_mesh(piece), 0.05, 4.0)
+    save_doc(
+        fp,
+        sha,
+        full,
+        origin,
+        stats,
+        res_mm_per_px=0.05,
+        body_mask=body,
+        cut_z_mm=cut,
+        detector_version=0,  # stale: real DETECTOR_VERSION is 1
+    )
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated extraction failure")
+
+    monkeypatch.setattr(cli_mod, "extract_footprints", _boom)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "pack",
+            str(stl_dir),
+            "--config",
+            str(_cfg(tmp_path, True)),
+            "--footprints-dir",
+            str(fp),
+            "--out",
+            str(tmp_path / "out"),
+            "--budget",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "body-mask extraction failed" in result.output
+    assert "using full shadow" in result.output
+    assert "verify" in result.output
+    assert "FAILED" not in result.output
+
+
+def test_pack_support_aware_writes_body_mask(tmp_path):
+    stl_dir = tmp_path / "stls"
+    _write_pieces(stl_dir, 1)
+    fp = tmp_path / "fp"
+    CliRunner().invoke(
+        app,
+        [
+            "pack",
+            str(stl_dir),
+            "--config",
+            str(_cfg(tmp_path, True)),
+            "--footprints-dir",
+            str(fp),
+            "--out",
+            str(tmp_path / "out"),
+            "--budget",
+            "0",
+        ],
+    )
+    from plate_packer.footprint_io import file_sha256, load_doc
+
+    doc = load_doc(fp, file_sha256(next(stl_dir.glob("*.stl"))))
+    assert doc.body_mask is not None
+    assert doc.detector_version == 1

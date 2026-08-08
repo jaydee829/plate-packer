@@ -12,6 +12,7 @@ from plate_packer.packer import (
     legal_placement_map,
     pack,
     rotate_mask,
+    rotate_pair,
     seed_order,
 )
 
@@ -424,3 +425,143 @@ def test_seed_order_area_matches_legacy_largest_first():
     assert seed_order(pieces, "area") == sorted(
         range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True
     )
+
+
+# --- shared-canvas rotation (Task 8) ---
+
+
+def test_rotate_pair_degenerate_full_equals_body():
+    full = np.ones((10, 12), np.uint8)
+    fr, br, _aff = rotate_pair(full, full, 37.0)
+    assert br.shape == fr.shape
+    assert (br == fr).all()
+
+
+def test_rotate_pair_angle0_reconstructs_body():
+    full = np.ones((12, 12), np.uint8)
+    body = np.zeros((12, 12), np.uint8)
+    body[2:10, 4:8] = 1  # narrower body, smaller bbox than full
+    fr, br, _aff = rotate_pair(full, body, 0.0)
+    assert (fr == full).all()
+    assert (br == body).all()  # body placed back at its full-frame position
+
+
+@pytest.mark.parametrize("angle", [0.0, 30.0, 90.0, 150.0], ids=lambda a: f"deg{a:g}")
+def test_rotate_pair_body_subset_same_shape(angle):
+    full = np.ones((12, 12), np.uint8)
+    body = full.copy()
+    body[3:9, 3:9] = 0  # interior hole (same bbox as full)
+    fr, br, _aff = rotate_pair(full, body, angle)
+    assert br.shape == fr.shape
+    assert (br & ~fr).sum() == 0  # body_rot is a subset of full_rot
+    assert br.sum() < fr.sum()  # the hole survives
+
+
+# --- two-mask packing (Task 9) ---
+
+
+def _paired_variants(full, body, angles):
+    """Build (body_variants, full_variants) dicts sharing a canvas per angle."""
+    bvar, fvar = {}, {}
+    for a in angles:
+        fr, br, _ = rotate_pair(full, body, a)
+        fvar[a], bvar[a] = fr, br
+    return bvar, fvar
+
+
+def test_boundary_rafts_may_overlap_same_plate():
+    # full = 20x20 raft; body = central 6-wide column (bodies stay disjoint,
+    # but the wide rafts overlap). Two pieces should share ONE plate.
+    full = np.ones((20, 20), np.uint8)
+    body = np.zeros((20, 20), np.uint8)
+    body[:, 7:13] = 1
+    b, f = _paired_variants(full, body, [0.0])
+    placements = pack([body], (20, 40), prerotated=[b], boundary=[f], order=[0], validate=False)
+    # pack a second identical piece by passing two
+    placements = pack(
+        [body, body],
+        (20, 40),
+        prerotated=[b, b],
+        boundary=[f, f],
+        order=[0, 1],
+        validate=False,
+    )
+    assert max(p.plate for p in placements) == 0  # both on plate 0
+
+
+def test_boundary_full_kept_on_plate():
+    # A piece whose body would fit flush at the right edge but whose full shadow
+    # (same shared shape, wider content) must stay within the plate: with a
+    # bordered plate the full may not overlap the border.
+    full = np.ones((10, 10), np.uint8)
+    body = np.zeros((10, 10), np.uint8)
+    body[:, :4] = 1  # body content only on the left of the shared canvas
+    b, f = _paired_variants(full, body, [0.0])
+    border = np.zeros((10, 30), np.uint8)
+    border[:, :2] = border[:, -2:] = 1  # 2px dead margins left/right
+    placements = pack(
+        [body],
+        (10, 30),
+        plate_mask=border,
+        prerotated=[b],
+        boundary=[f],
+        order=[0],
+        validate=False,
+    )
+    (pl,) = placements
+    # full (all 10 cols occupied) must sit clear of both 2px borders
+    assert pl.col >= 2 and pl.col + 10 <= 28
+
+
+def test_boundary_empty_plate_fit_uses_full():
+    # body fits a tiny plate but the full shadow does not -> rejected.
+    full = np.ones((10, 10), np.uint8)
+    body = np.zeros((10, 10), np.uint8)
+    body[:4, :4] = 1
+    b, f = _paired_variants(full, body, [0.0])
+    with pytest.raises(ValueError, match="does not fit"):
+        pack([body], (6, 6), prerotated=[b], boundary=[f], order=[0], validate=True)
+
+
+def test_boundary_raft_may_not_overlap_another_body():
+    # B: solid, no cut (body == full). A: cut, body is the RIGHT strip; raft = left.
+    B_full = np.ones((20, 20), np.uint8)
+    A_full = np.ones((20, 20), np.uint8)
+    A_body = np.zeros((20, 20), np.uint8)
+    A_body[:, 16:] = 1
+    plate = (20, 40)
+    prerot = [{0.0: B_full}, {0.0: A_body}]
+    bound = [{0.0: B_full}, {0.0: A_full}]
+    placements = pack(
+        [B_full, A_body], plate, prerotated=prerot, boundary=bound, order=[0, 1], validate=False
+    )
+    occ_body_B = np.zeros(plate, np.uint8)
+    occ_full_A = np.zeros(plate, np.uint8)
+    for pl in placements:
+        m = bound[pl.piece][0.0] if pl.piece == 1 else B_full  # A: full; B: body(==full)
+        tgt = occ_full_A if pl.piece == 1 else occ_body_B
+        tgt[pl.row : pl.row + 20, pl.col : pl.col + 20] |= m
+    assert (occ_full_A & occ_body_B).sum() == 0  # A's raft must not sit on B's body
+
+
+def test_boundary_body_may_not_overlap_another_raft():
+    # B: cut, body is the LEFT strip; raft = right. A: solid (body == full).
+    B_full = np.ones((20, 20), np.uint8)
+    B_body = np.zeros((20, 20), np.uint8)
+    B_body[:, :4] = 1
+    A_full = np.ones((20, 20), np.uint8)
+    plate = (20, 40)
+    prerot = [{0.0: B_body}, {0.0: A_full}]
+    bound = [{0.0: B_full}, {0.0: A_full}]
+    placements = pack(
+        [B_body, A_full], plate, prerotated=prerot, boundary=bound, order=[0, 1], validate=False
+    )
+    B_raft = B_full & ~B_body
+    occ_raft_B = np.zeros(plate, np.uint8)
+    occ_body_A = np.zeros(plate, np.uint8)
+    for pl in placements:
+        if pl.piece == 0:
+            occ_raft_B[pl.row : pl.row + 20, pl.col : pl.col + 20] |= B_raft
+        else:
+            occ_body_A[pl.row : pl.row + 20, pl.col : pl.col + 20] |= A_full
+    assert (occ_body_A & occ_raft_B).sum() == 0  # A's body must not sit on B's raft

@@ -29,6 +29,8 @@ class PackConfig:
     safety_grid: int = 16  # uniform-rotation backstop unioned with shape-aware angles (ADR-012)
     edge_contact_weight: float = 1.0
     ordering: str = "difficulty"
+    support_aware: bool = False  # opt-in: pack on base-excluded model_body footprint
+    support_cut_cap_mm: float = 5.0  # search-window / max base-cut height (mm)
 
 
 def load_config(path: Path | None = None) -> PackConfig:
@@ -61,6 +63,8 @@ def load_config(path: Path | None = None) -> PackConfig:
             packing.get("edge_contact_weight", PackConfig.edge_contact_weight)
         ),
         ordering=str(packing.get("ordering", PackConfig.ordering)),
+        support_aware=bool(packing.get("support_aware", PackConfig.support_aware)),
+        support_cut_cap_mm=float(packing.get("support_cut_cap_mm", PackConfig.support_cut_cap_mm)),
     )
     _validate(cfg)
     return cfg
@@ -110,3 +114,5 @@ def _validate(cfg: PackConfig) -> None:
         raise ValueError("packing.edge_contact_weight must be >= 0")
     if cfg.ordering not in ("difficulty", "area"):
         raise ValueError('packing.ordering must be "difficulty" or "area"')
+    if cfg.support_cut_cap_mm <= 0:
+        raise ValueError("packing.support_cut_cap_mm must be > 0")

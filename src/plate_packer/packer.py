@@ -31,6 +31,7 @@ def pack(
     order=None,
     validate=True,
     edge_weight=1.0,
+    boundary=None,
 ):
     """Greedy-pack piece masks onto plates; spill to a new plate when full.
 
@@ -39,6 +40,11 @@ def pack(
     overrides the largest-area-first insertion order; validate=False skips
     the every-piece-fits-an-empty-plate check (improve() validates once).
     edge_weight scales the plate-border contact score (see contact_map).
+    boundary (per-piece list of {angle: full_rot}, parallel to prerotated's
+    {angle: body_rot}, both sharing a canvas per angle) switches to two-mask
+    collision: inter-piece collision uses the body, plate-boundary/dead-margin
+    uses the full, and the empty-plate fit check uses the full. When None the
+    single-mask path below runs unchanged.
     Raises ValueError if a piece cannot fit an empty plate at any rotation.
     """
     choose = choose or contact_first
@@ -51,6 +57,11 @@ def pack(
         if getattr(choose, "uses_contact", False)
         else None
     )
+
+    if boundary is not None:
+        return _pack_bounded(
+            pieces, empty, prerotated, boundary, rings, choose, order, validate, edge_weight
+        )
 
     if validate:
         for i, variants in enumerate(prerotated):
@@ -134,6 +145,99 @@ def _best_spot(occupancy, variants, rings, choose, edge_weight=1.0):
     if best is None:
         return None
     return best[1], best[2], best[3]
+
+
+def _best_spot_bounded(
+    body_occ, full_occ, border, variants, fullvars, rings, choose, edge_weight=1.0
+):
+    """Best (anchor, angle, contact) under two-mask legality. The only permitted
+    overlap is raft-on-raft: the candidate FULL must clear all placed BODIES, the
+    candidate BODY must clear all placed FULLS, and the FULL must clear the plate
+    border/margins. body_rot and full_rot share a canvas (same shape), so the
+    legality maps AND directly."""
+    best = None
+    for angle, body in variants.items():
+        full = fullvars[angle]
+        if body.shape[0] > body_occ.shape[0] or body.shape[1] > body_occ.shape[1]:
+            continue
+        legal = (
+            legal_placement_map(body_occ, full)
+            & legal_placement_map(full_occ, body)
+            & legal_placement_map(border, full)
+        )
+        contact = (
+            contact_map(body_occ | border, rings[angle], edge_weight)
+            if rings is not None
+            else np.zeros(legal.shape)
+        )
+        anchor = choose(legal, contact)
+        if anchor is None:
+            continue
+        score = float(contact[anchor])
+        key = (-score, anchor[0], anchor[1])
+        if best is None or key < best[0]:
+            best = (key, anchor, angle, score)
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
+def _pack_bounded(
+    pieces, border, prerotated, boundary, rings, choose, order, validate, edge_weight
+):
+    """Two-mask greedy pack: the only permitted overlap is raft-on-raft; a raft
+    may never land on another piece's body nor a body on another piece's raft.
+    Each plate tracks the union of placed bodies AND the union of placed fulls."""
+    plate_shape = border.shape
+    if validate:
+        for i, fullvars in enumerate(boundary):
+            if not any(_fits(border, m) for m in fullvars.values()):
+                raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
+    if order is None:
+        order = sorted(range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True)
+    body_plates: list[np.ndarray] = []
+    full_plates: list[np.ndarray] = []
+    placements: list[Placement] = []
+    for i in order:
+        piece_rings = rings[i] if rings is not None else None
+        target = plate_idx = None
+        for idx in range(len(body_plates)):
+            target = _best_spot_bounded(
+                body_plates[idx],
+                full_plates[idx],
+                border,
+                prerotated[i],
+                boundary[i],
+                piece_rings,
+                choose,
+                edge_weight,
+            )
+            if target:
+                plate_idx = idx
+                break
+        if target is None:
+            body_plates.append(np.zeros(plate_shape, np.uint8))
+            full_plates.append(np.zeros(plate_shape, np.uint8))
+            plate_idx = len(body_plates) - 1
+            target = _best_spot_bounded(
+                body_plates[plate_idx],
+                full_plates[plate_idx],
+                border,
+                prerotated[i],
+                boundary[i],
+                piece_rings,
+                choose,
+                edge_weight,
+            )
+        if target is None:
+            raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
+        (row, col), angle, score = target
+        body = prerotated[i][angle]
+        full = boundary[i][angle]
+        body_plates[plate_idx][row : row + body.shape[0], col : col + body.shape[1]] |= body
+        full_plates[plate_idx][row : row + full.shape[0], col : col + full.shape[1]] |= full
+        placements.append(Placement(i, plate_idx, row, col, angle, score))
+    return sorted(placements, key=lambda p: p.piece)
 
 
 def legal_placement_map(plate: np.ndarray, piece: np.ndarray) -> np.ndarray:
@@ -234,6 +338,35 @@ def rotate_mask(mask: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndar
     m[0, 2] -= c0
     m[1, 2] -= r0
     return cropped, m
+
+
+def _paste(dst: np.ndarray, src: np.ndarray, r: int, c: int) -> None:
+    """OR `src` into `dst` at top-left (r, c), clipped to `dst` bounds."""
+    h, w = src.shape
+    r0, c0 = max(r, 0), max(c, 0)
+    r1, c1 = min(r + h, dst.shape[0]), min(c + w, dst.shape[1])
+    if r1 <= r0 or c1 <= c0:
+        return
+    dst[r0:r1, c0:c1] |= src[r0 - r : r1 - r, c0 - c : c1 - c]
+
+
+def rotate_pair(full: np.ndarray, body: np.ndarray, angle_deg: float):
+    """Rotate `full` and `body` (body ⊆ full, same input canvas) onto ONE shared
+    canvas cropped to the full mask's content bbox.
+
+    Returns (full_rot, body_rot, affine): full_rot == rotate_mask(full, ·)[0];
+    body_rot has the same shape, with the body content placed at its position in
+    the full frame; affine is full's 2x3 map (export/verify use it). Because both
+    outputs share shape and anchor, downstream legality/verify need no crop-offset
+    arithmetic. The body's crop origin sits (aff_full - aff_body) below/right of
+    full's, so the body is pasted at that offset."""
+    full_rot, aff_full = rotate_mask(full, angle_deg)
+    body_own, aff_body = rotate_mask(body, angle_deg)
+    dr = round(aff_full[1, 2] - aff_body[1, 2])
+    dc = round(aff_full[0, 2] - aff_body[0, 2])
+    body_rot = np.zeros_like(full_rot)
+    _paste(body_rot, body_own, dr, dc)
+    return full_rot, body_rot, aff_full
 
 
 def bottom_left(legal: np.ndarray, contact: np.ndarray | None = None) -> tuple[int, int] | None:
