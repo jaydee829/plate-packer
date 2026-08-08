@@ -644,3 +644,35 @@ def test_fusion_bodies_still_collide():
         validate=False,
     )
     assert max(p.plate for p in placements) == 1
+
+
+def test_fusion_collapsed_angle_is_stricter_not_permissive():
+    """PR #10 review probe: a piece can be fused overall (the body/full split
+    survives at some angle) while another angle's raster collapses to
+    body == full. The fused branch then tests the WHOLE full against placed
+    fused bodies -- strictly harsher than the split raster (full is a superset
+    of body), so collapse only removes placements, never admits new ones. Pin
+    the harsh direction: the collapsed variant may not overlap a placed fused
+    BODY even though the piece carries the fused flag. (The nesting permission
+    itself is justified per-piece -- a gate-accepted cut -- not per-raster.)"""
+    a_full = np.ones((20, 20), np.uint8)
+    a_body = np.zeros((20, 20), np.uint8)
+    a_body[:, 12:] = 1  # placed fused piece: body = right strip
+    # candidate: fused via the 30x30 split variant (which cannot fit the plate,
+    # forcing the search onto the collapsed 20x20 variant at angle 90)
+    c_split_full = np.ones((30, 30), np.uint8)
+    c_split_body = np.zeros((30, 30), np.uint8)
+    c_split_body[:, :8] = 1
+    c_collapsed = np.ones((20, 20), np.uint8)  # body == full at this angle
+    prerot = [{0.0: a_body}, {0.0: c_split_body, 90.0: c_collapsed}]
+    bound = [{0.0: a_full}, {0.0: c_split_full, 90.0: c_collapsed}]
+    placements = pack(
+        [a_body, c_collapsed],
+        (20, 20),
+        prerotated=prerot,
+        boundary=bound,
+        order=[0, 1],
+        validate=False,
+    )
+    # collapsed full overlaps A's body at the only anchor -> must spill
+    assert max(p.plate for p in placements) == 1
