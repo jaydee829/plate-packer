@@ -29,9 +29,11 @@ Second knob: `support_cut_cap_mm` default 5.0 → **3.0**. Every accepted knee
 on the calibration corpus sits at 0.25–1.25 mm; a 3 mm cap costs nothing,
 independently kills the deep bogus knees (defense in depth with the gate),
 and guarantees fusion can never touch geometry above 3 mm. No
-`DETECTOR_VERSION` bump (user decision: cached cuts are unaffected — all
-corpus cuts ≤ 1.25 mm under either cap; the cap is config, not part of the
-content key).
+`DETECTOR_VERSION` bump (user decision). Ceiling enforcement at load instead:
+the pack CLI treats a cached doc as stale when `cut_z_mm >
+support_cut_cap_mm` and re-extracts under the active cap, so legacy caches
+from the 5 mm era cannot defeat the guarantee (a cached cut ≤ cap stays
+valid regardless of the cap it was found under).
 
 ## Collision semantics
 

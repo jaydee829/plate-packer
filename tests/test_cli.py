@@ -387,6 +387,60 @@ def test_pack_support_aware_stale_detector_version_falls_back_to_full_shadow(tmp
     assert "FAILED" not in result.output
 
 
+def test_pack_support_aware_overcap_cached_cut_is_stale(tmp_path, monkeypatch):
+    """ADR-015: a cached doc whose cut_z_mm exceeds the active support_cut_cap_mm
+    (e.g. cached under the old 5mm default cap) must be treated as stale even at
+    the current DETECTOR_VERSION -- otherwise the fusion-zone ceiling is not
+    enforced for pre-existing caches. The simulated extraction failure proves
+    re-extraction was attempted (and falls back to the full shadow safely)."""
+    import plate_packer.cli as cli_mod
+    from plate_packer.footprint import DETECTOR_VERSION, extract_footprints
+    from plate_packer.footprint_io import file_sha256, save_doc
+
+    stl_dir = tmp_path / "stls"
+    _write_pieces(stl_dir, 1)
+    piece = next(stl_dir.glob("*.stl"))
+    fp = tmp_path / "fp"
+    sha = file_sha256(piece)
+    full, body, origin, _cut, stats = extract_footprints(cli_mod.load_piece_mesh(piece), 0.05, 3.0)
+    save_doc(
+        fp,
+        sha,
+        full,
+        origin,
+        stats,
+        res_mm_per_px=0.05,
+        body_mask=body,
+        cut_z_mm=4.5,  # over the 3.0 cap: legacy cache from the 5mm-cap era
+        detector_version=DETECTOR_VERSION,  # current -- version alone says "fresh"
+    )
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated extraction failure")
+
+    monkeypatch.setattr(cli_mod, "extract_footprints", _boom)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "pack",
+            str(stl_dir),
+            "--config",
+            str(_cfg(tmp_path, True)),
+            "--footprints-dir",
+            str(fp),
+            "--out",
+            str(tmp_path / "out"),
+            "--budget",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "body-mask extraction failed" in result.output
+    assert "using full shadow" in result.output
+    assert "FAILED" not in result.output
+
+
 def test_pack_support_aware_writes_body_mask(tmp_path):
     stl_dir = tmp_path / "stls"
     _write_pieces(stl_dir, 1)
