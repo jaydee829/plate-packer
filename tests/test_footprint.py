@@ -148,7 +148,7 @@ def test_detect_base_cut_rejects(tris):
 )
 def test_detect_base_cut_ungated_still_finds_knee(tris, expected_knee):
     """gated=False exposes the raw area-knee: proves the gate (not MIN_REDUCTION)
-    is what rejects these shapes in test_detect_base_cut above."""
+    is what rejects these shapes in test_detect_base_cut_rejects above."""
     assert detect_base_cut(tris, 0.1, 5.0, gated=False) == pytest.approx(expected_knee, abs=BAND_MM)
 
 

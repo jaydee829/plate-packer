@@ -78,7 +78,7 @@ This file tracks work history and ticket references.
 - **URL**: N/A
 - **Notes**: Repo is pre-code. Next planned step per PLATEPACKER_SEED.md: prototype footprint extraction against real supported STLs in `example_stls/` (currently empty — needs files).
 
-### 2026-08-08 - raft-signature gate (ADR-014)
+### 2026-08-08 - RAFT-GATE: Band-dominance acceptance gate (ADR-014, PR #9)
 - Band-dominance acceptance gate in `detect_base_cut`; `DETECTOR_VERSION` 2; `tools/probe_raft_gate.py`; corpus-calibrated 0.35 (101/13 exact split). Spec: `docs/superpowers/specs/2026-08-08-raft-signature-gate-design.md`.
 
 ## Usage Tips
