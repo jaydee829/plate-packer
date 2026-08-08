@@ -41,10 +41,12 @@ def pack(
     the every-piece-fits-an-empty-plate check (improve() validates once).
     edge_weight scales the plate-border contact score (see contact_map).
     boundary (per-piece list of {angle: full_rot}, parallel to prerotated's
-    {angle: body_rot}, both sharing a canvas per angle) switches to two-mask
-    collision: inter-piece collision uses the body, plate-boundary/dead-margin
-    uses the full, and the empty-plate fit check uses the full. When None the
-    single-mask path below runs unchanged.
+    {angle: body_rot}, both sharing a canvas per angle) switches to raft-fusion
+    collision (ADR-015): pieces whose body differs from their full (gate-
+    accepted cut) may nest bodies over each other's rafts; body == full pieces
+    keep strict full-shadow collision. Plate-boundary/dead-margin and the
+    empty-plate fit check always use the full. When None the single-mask path
+    below runs unchanged.
     Raises ValueError if a piece cannot fit an empty plate at any rotation.
     """
     choose = choose or contact_first
@@ -148,25 +150,44 @@ def _best_spot(occupancy, variants, rings, choose, edge_weight=1.0):
 
 
 def _best_spot_bounded(
-    body_occ, full_occ, border, variants, fullvars, rings, choose, edge_weight=1.0
+    body_occ,
+    full_nf_occ,
+    full_all_occ,
+    is_fused,
+    border,
+    variants,
+    fullvars,
+    rings,
+    choose,
+    edge_weight=1.0,
 ):
-    """Best (anchor, angle, contact) under two-mask legality. The only permitted
-    overlap is raft-on-raft: the candidate FULL must clear all placed BODIES, the
-    candidate BODY must clear all placed FULLS, and the FULL must clear the plate
-    border/margins. body_rot and full_rot share a canvas (same shape), so the
-    legality maps AND directly."""
+    """Best (anchor, angle, contact) under raft-fusion legality (ADR-015).
+
+    A FUSED candidate (gate-accepted cut): its BODY must clear placed fused
+    bodies, its FULL must clear placed non-fused fulls and the plate border;
+    its body may nest over fused rafts and its raft may fuse with them.
+    A NON-FUSED candidate (body == full): its FULL must clear ALL placed
+    fulls -- strict both ways, since its low-Z material is unknown.
+    body_rot and full_rot share a canvas (same shape), so legality maps AND
+    directly."""
     best = None
     for angle, body in variants.items():
         full = fullvars[angle]
         if body.shape[0] > body_occ.shape[0] or body.shape[1] > body_occ.shape[1]:
             continue
-        legal = (
-            legal_placement_map(body_occ, full)
-            & legal_placement_map(full_occ, body)
-            & legal_placement_map(border, full)
-        )
+        if is_fused:
+            # body ⊆ full (rotate_pair shared-canvas contract): the full-vs-
+            # full_nf term is what excludes this candidate's BODY from placed
+            # non-fused fulls -- independently rotated masks would open a hole.
+            legal = (
+                legal_placement_map(body_occ, body)
+                & legal_placement_map(full_nf_occ, full)
+                & legal_placement_map(border, full)
+            )
+        else:
+            legal = legal_placement_map(full_all_occ, full) & legal_placement_map(border, full)
         contact = (
-            contact_map(body_occ | border, rings[angle], edge_weight)
+            contact_map(body_occ | full_nf_occ | border, rings[angle], edge_weight)
             if rings is not None
             else np.zeros(legal.shape)
         )
@@ -185,18 +206,26 @@ def _best_spot_bounded(
 def _pack_bounded(
     pieces, border, prerotated, boundary, rings, choose, order, validate, edge_weight
 ):
-    """Two-mask greedy pack: the only permitted overlap is raft-on-raft; a raft
-    may never land on another piece's body nor a body on another piece's raft.
-    Each plate tracks the union of placed bodies AND the union of placed fulls."""
+    """Raft-fusion greedy pack (ADR-015). A piece is FUSED iff body != full at
+    any angle (i.e. it carries a gate-accepted cut, ADR-014). Fused pieces may
+    nest bodies over each other's rafts and fuse raft-with-raft; their bodies
+    never overlap. A non-fused piece packs with strict full-shadow collision
+    both ways. Each plate tracks three grids: union of fused bodies, union of
+    non-fused fulls, and union of ALL fulls."""
     plate_shape = border.shape
+    fused = [
+        any(not np.array_equal(boundary[i][a], prerotated[i][a]) for a in prerotated[i])
+        for i in range(len(pieces))
+    ]
     if validate:
         for i, fullvars in enumerate(boundary):
             if not any(_fits(border, m) for m in fullvars.values()):
                 raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
     if order is None:
         order = sorted(range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True)
-    body_plates: list[np.ndarray] = []
-    full_plates: list[np.ndarray] = []
+    body_plates: list[np.ndarray] = []  # fused bodies
+    full_nf_plates: list[np.ndarray] = []  # non-fused fulls
+    full_all_plates: list[np.ndarray] = []  # every full
     placements: list[Placement] = []
     for i in order:
         piece_rings = rings[i] if rings is not None else None
@@ -204,7 +233,9 @@ def _pack_bounded(
         for idx in range(len(body_plates)):
             target = _best_spot_bounded(
                 body_plates[idx],
-                full_plates[idx],
+                full_nf_plates[idx],
+                full_all_plates[idx],
+                fused[i],
                 border,
                 prerotated[i],
                 boundary[i],
@@ -217,11 +248,14 @@ def _pack_bounded(
                 break
         if target is None:
             body_plates.append(np.zeros(plate_shape, np.uint8))
-            full_plates.append(np.zeros(plate_shape, np.uint8))
+            full_nf_plates.append(np.zeros(plate_shape, np.uint8))
+            full_all_plates.append(np.zeros(plate_shape, np.uint8))
             plate_idx = len(body_plates) - 1
             target = _best_spot_bounded(
                 body_plates[plate_idx],
-                full_plates[plate_idx],
+                full_nf_plates[plate_idx],
+                full_all_plates[plate_idx],
+                fused[i],
                 border,
                 prerotated[i],
                 boundary[i],
@@ -234,8 +268,11 @@ def _pack_bounded(
         (row, col), angle, score = target
         body = prerotated[i][angle]
         full = boundary[i][angle]
-        body_plates[plate_idx][row : row + body.shape[0], col : col + body.shape[1]] |= body
-        full_plates[plate_idx][row : row + full.shape[0], col : col + full.shape[1]] |= full
+        if fused[i]:
+            body_plates[plate_idx][row : row + body.shape[0], col : col + body.shape[1]] |= body
+        else:
+            full_nf_plates[plate_idx][row : row + full.shape[0], col : col + full.shape[1]] |= full
+        full_all_plates[plate_idx][row : row + full.shape[0], col : col + full.shape[1]] |= full
         placements.append(Placement(i, plate_idx, row, col, angle, score))
     return sorted(placements, key=lambda p: p.piece)
 

@@ -199,7 +199,13 @@ def pack_command(
             doc = load_doc(fp_dir, sha)
             body_ok = True
             if cfg.support_aware and (
-                doc.body_mask is None or doc.detector_version != DETECTOR_VERSION
+                doc.body_mask is None
+                or doc.detector_version != DETECTOR_VERSION
+                # An over-cap cached cut (e.g. from the pre-ADR-015 5mm default)
+                # would defeat the fusion-zone ceiling: re-extract under the
+                # active cap. cut_z_mm <= cap stays valid regardless of the cap
+                # it was found under.
+                or (doc.cut_z_mm or 0.0) > cfg.support_cut_cap_mm
             ):
                 try:
                     full, body, origin, cut, stats = extract_footprints(

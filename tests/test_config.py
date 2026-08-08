@@ -207,15 +207,16 @@ def test_config_rejects_invalid_coarse_to_fine_knobs(tmp_path, key, match):
 def test_support_defaults(tmp_path):
     cfg = load_config(tmp_path / "missing.toml")
     assert cfg.support_aware is False
-    assert cfg.support_cut_cap_mm == 5.0
+    assert cfg.support_cut_cap_mm == 3.0  # ADR-015: hard ceiling on the fusion zone
 
 
 def test_support_knobs_load_from_toml(tmp_path):
     p = tmp_path / "config.toml"
-    p.write_text("[packing]\nsupport_aware = true\nsupport_cut_cap_mm = 3.0\n", encoding="utf-8")
+    # cap value must differ from the 3.0 default or this test goes vacuous
+    p.write_text("[packing]\nsupport_aware = true\nsupport_cut_cap_mm = 2.0\n", encoding="utf-8")
     cfg = load_config(p)
     assert cfg.support_aware is True
-    assert cfg.support_cut_cap_mm == 3.0
+    assert cfg.support_cut_cap_mm == 2.0
 
 
 @pytest.mark.parametrize("value", [pytest.param("0", id="zero"), pytest.param("-1", id="negative")])

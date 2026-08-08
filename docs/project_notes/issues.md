@@ -12,6 +12,15 @@ This file tracks work history and ticket references.
 
 ## Log
 
+### 2026-08-08 - RAFT-FUSION: Gated body-over-raft nesting (ADR-015, PR #10)
+- **Status**: Completed, merged
+- **Description**: Fused pieces (gate-accepted cut) may nest bodies over each other's rafts; non-fused stay strict full-shadow. Fused ⇔ body ≠ full, derived in `_pack_bounded` (three grids, no API changes). `support_cut_cap_mm` default 3.0, enforced against legacy caches at pack time (`cut_z_mm > cap` ⇒ stale). Spec: `docs/superpowers/specs/2026-08-08-raft-fusion-packing-design.md`.
+- **URL**: https://github.com/jaydee829/plate-packer/pull/10 (stacked on PR #9 / ADR-014)
+- **Notes**: **Baseline (30-piece Tome set, support_aware=true)**: still 4 plates BUT plate 4 holds only 4 pieces at 13.8% (others 54.5/66.5/55.2%) — one consolidation away from 3; nesting confirmed in the wild (a whole piece packed inside another's concavity). Improve run: 40 evals / 3 improvements, still climbing — search not exhausted. Fitness (0.2986) NOT comparable to pre-support-aware runs (body-mask fills read lower); compare plate count + occupancy only. 4 auto-review rounds: real catches = legacy-cache ceiling enforcement + `body ⊆ full` pin test; round-3 "Critical" (per-angle collapse) rejected with subset-monotonicity proof + probe + pin test (see PR thread). **Next: (1) nesting-aware contact scoring** (rafts excluded from attraction, so greedy never *seeks* concavities — add candidate-body-over-placed-raft term to anchor score, one extra FFT per rotation); **(2) last-plate consolidation pass** (re-place each last-plate piece into earlier plates, drop plate if all succeed).
+
+### 2026-08-08 - RAFT-GATE: Band-dominance acceptance gate (ADR-014, PR #9)
+- Band-dominance acceptance gate in `detect_base_cut`; `DETECTOR_VERSION` 2; `tools/probe_raft_gate.py`; corpus-calibrated 0.35 (101/13 exact split). Spec: `docs/superpowers/specs/2026-08-08-raft-signature-gate-design.md`.
+
 ### 2026-08-07 - SUPPORT-AWARE: Base-layer-excluded footprints (ADR-013)
 - **Status**: Completed (branch feat/support-aware-footprints, off main; 12 SDD tasks)
 - **Description**: Opt-in `support_aware` packs pre-supported models on a base-excluded `model_body` footprint (full shadow minus the auto-detected raft/support base), recovering interior concavity for denser plates. Footprint-area-knee detector (`detect_base_cut`); two-mask extractor (`extract_footprints`); cache schema v2 (`model_body` band + cut metadata, v1 read fallback); `prepare_mask(kind=)`; two-mask packing (`rotate_pair` + `pack(boundary=)` / `improve(boundary_pieces=)`): body-vs-pieces (rafts overlap) + full-vs-plate-boundary (raft on-plate); verify ORs the full shadow. Off path byte-identical. 323 tests, final review MERGE.
@@ -77,9 +86,6 @@ This file tracks work history and ticket references.
 - **Description**: Created CLAUDE.md from the seed design doc and initialized the project memory system (docs/project_notes/ + memory protocols in CLAUDE.md, GEMINI.md, AGENTS.md).
 - **URL**: N/A
 - **Notes**: Repo is pre-code. Next planned step per PLATEPACKER_SEED.md: prototype footprint extraction against real supported STLs in `example_stls/` (currently empty — needs files).
-
-### 2026-08-08 - RAFT-GATE: Band-dominance acceptance gate (ADR-014, PR #9)
-- Band-dominance acceptance gate in `detect_base_cut`; `DETECTOR_VERSION` 2; `tools/probe_raft_gate.py`; corpus-calibrated 0.35 (101/13 exact split). Spec: `docs/superpowers/specs/2026-08-08-raft-signature-gate-design.md`.
 
 ## Usage Tips
 

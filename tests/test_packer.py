@@ -457,6 +457,21 @@ def test_rotate_pair_body_subset_same_shape(angle):
     assert br.sum() < fr.sum()  # the hole survives
 
 
+@pytest.mark.parametrize("angle", [0.0, 30.0, 90.0, 150.0], ids=lambda a: f"deg{a:g}")
+def test_rotate_pair_offset_body_stays_subset(angle):
+    """ADR-015 legality leans on body_rot ⊆ full_rot: the fused branch checks
+    the candidate's FULL (not its body) against non-fused fulls, so a subset
+    break would silently open a collision hole. Pin the invariant for a body
+    with a smaller, OFF-CENTER bbox, where the integer paste offset between
+    the two independent crops carries the containment."""
+    full = np.ones((14, 11), np.uint8)
+    body = np.zeros((14, 11), np.uint8)
+    body[1:6, 2:5] = 1  # small off-center body -> different crop origin
+    fr, br, _aff = rotate_pair(full, body, angle)
+    assert br.shape == fr.shape
+    assert (br & ~fr).sum() == 0  # body_rot is a subset of full_rot
+
+
 # --- two-mask packing (Task 9) ---
 
 
@@ -556,12 +571,108 @@ def test_boundary_body_may_not_overlap_another_raft():
     placements = pack(
         [B_body, A_full], plate, prerotated=prerot, boundary=bound, order=[0, 1], validate=False
     )
-    B_raft = B_full & ~B_body
-    occ_raft_B = np.zeros(plate, np.uint8)
+    occ_full_B = np.zeros(plate, np.uint8)
     occ_body_A = np.zeros(plate, np.uint8)
     for pl in placements:
         if pl.piece == 0:
-            occ_raft_B[pl.row : pl.row + 20, pl.col : pl.col + 20] |= B_raft
+            occ_full_B[pl.row : pl.row + 20, pl.col : pl.col + 20] |= B_full
         else:
             occ_body_A[pl.row : pl.row + 20, pl.col : pl.col + 20] |= A_full
-    assert (occ_body_A & occ_raft_B).sum() == 0  # A's body must not sit on B's raft
+    # A (non-fused) must clear B's ENTIRE full -- raft and body alike
+    assert (occ_body_A & occ_full_B).sum() == 0
+
+
+def test_fusion_two_nonfused_fulls_still_collide():
+    """ADR-015 regression pin: two solid (non-fused) pieces through the
+    boundary path must keep strict full-shadow collision -- a one-anchor plate
+    forces the second to spill. Guards full_all_occ against dropping non-fused
+    fulls (the ADR-013 missing-ordered-pair failure shape)."""
+    solid = np.ones((20, 20), np.uint8)
+    v = {0.0: solid}
+    placements = pack(
+        [solid, solid],
+        (20, 20),
+        prerotated=[v, v],
+        boundary=[v, v],
+        order=[0, 1],
+        validate=False,
+    )
+    assert max(p.plate for p in placements) == 1
+
+
+def test_fusion_body_may_nest_over_fused_raft():
+    """ADR-015: two gate-accepted (fused) pieces may overlap fulls as long as
+    their BODIES stay disjoint -- A's body nests over B's raft and vice versa.
+    On a plate exactly one canvas wide, both must land at the same anchor,
+    which strict two-mask packing (full-vs-body) would spill to a new plate."""
+    full = np.ones((20, 20), np.uint8)
+    a_body = np.zeros((20, 20), np.uint8)
+    a_body[:, 16:] = 1  # body on the right; raft = left 16 cols
+    b_body = np.zeros((20, 20), np.uint8)
+    b_body[:, :4] = 1  # body on the left; raft = right 16 cols
+    av, af = _paired_variants(full, a_body, [0.0])
+    bv, bf = _paired_variants(full, b_body, [0.0])
+    placements = pack(
+        [a_body, b_body],
+        (20, 20),
+        prerotated=[av, bv],
+        boundary=[af, bf],
+        order=[0, 1],
+        validate=False,
+    )
+    assert max(p.plate for p in placements) == 0  # nested onto ONE plate
+    occ = np.zeros((20, 20), np.uint8)
+    for pl in placements:
+        body = [a_body, b_body][pl.piece]
+        assert (occ[pl.row : pl.row + 20, pl.col : pl.col + 20] & body).sum() == 0
+        occ[pl.row : pl.row + 20, pl.col : pl.col + 20] |= body
+
+
+def test_fusion_bodies_still_collide():
+    """ADR-015: fused pieces' BODIES never overlap -- two center-body pieces
+    cannot share a one-anchor plate, so the second spills."""
+    full = np.ones((20, 20), np.uint8)
+    body = np.zeros((20, 20), np.uint8)
+    body[:, 8:12] = 1
+    bv, fv = _paired_variants(full, body, [0.0])
+    placements = pack(
+        [body, body],
+        (20, 20),
+        prerotated=[bv, bv],
+        boundary=[fv, fv],
+        order=[0, 1],
+        validate=False,
+    )
+    assert max(p.plate for p in placements) == 1
+
+
+def test_fusion_collapsed_angle_is_stricter_not_permissive():
+    """PR #10 review probe: a piece can be fused overall (the body/full split
+    survives at some angle) while another angle's raster collapses to
+    body == full. The fused branch then tests the WHOLE full against placed
+    fused bodies -- strictly harsher than the split raster (full is a superset
+    of body), so collapse only removes placements, never admits new ones. Pin
+    the harsh direction: the collapsed variant may not overlap a placed fused
+    BODY even though the piece carries the fused flag. (The nesting permission
+    itself is justified per-piece -- a gate-accepted cut -- not per-raster.)"""
+    a_full = np.ones((20, 20), np.uint8)
+    a_body = np.zeros((20, 20), np.uint8)
+    a_body[:, 12:] = 1  # placed fused piece: body = right strip
+    # candidate: fused via the 30x30 split variant (which cannot fit the plate,
+    # forcing the search onto the collapsed 20x20 variant at angle 90)
+    c_split_full = np.ones((30, 30), np.uint8)
+    c_split_body = np.zeros((30, 30), np.uint8)
+    c_split_body[:, :8] = 1
+    c_collapsed = np.ones((20, 20), np.uint8)  # body == full at this angle
+    prerot = [{0.0: a_body}, {0.0: c_split_body, 90.0: c_collapsed}]
+    bound = [{0.0: a_full}, {0.0: c_split_full, 90.0: c_collapsed}]
+    placements = pack(
+        [a_body, c_collapsed],
+        (20, 20),
+        prerotated=prerot,
+        boundary=bound,
+        order=[0, 1],
+        validate=False,
+    )
+    # collapsed full overlaps A's body at the only anchor -> must spill
+    assert max(p.plate for p in placements) == 1
