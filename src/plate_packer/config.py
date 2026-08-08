@@ -30,7 +30,8 @@ class PackConfig:
     edge_contact_weight: float = 1.0
     ordering: str = "difficulty"
     support_aware: bool = False  # opt-in: pack on base-excluded model_body footprint
-    support_cut_cap_mm: float = 5.0  # search-window / max base-cut height (mm)
+    support_cut_cap_mm: float = 3.0  # search-window / max base-cut height (mm); also the
+    # hard ceiling on the raft-fusion zone (ADR-015) -- geometry above it is untouchable
 
 
 def load_config(path: Path | None = None) -> PackConfig:

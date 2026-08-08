@@ -338,6 +338,26 @@ safety grid, and revisit `angle_cap` given safety_grid is on by default.
 - Underlying mechanism of both failure directions: the band is the *XY shadow* of straddling triangles, not a true planar cross-section. Sloped geometry (tapered support necks, diagonal struts) inflates/merges components → false reject, the safe direction; a near-horizontal patch that happens to straddle the plane (spread hand, crown tips) contributes an isolated small blob instead of a slice → the concrete false-accept path. Well-separated on Tome of Demons' vertical pillar forests (2.7× gap); recheck via `tools/probe_raft_gate.py` on corpora with more organic/sloped supports. Opt-in regression: `test_raft_gate_verdict_on_real_corpus` (`-m example_stls`) pins 2 accept + 2 reject verdicts on named corpus files.
 - Smooth synthetic tapers (e.g. `trimesh.creation.cone`) never fire the knee at all (every side triangle reaches the apex, so the reach map never drops); fine-tessellated real tapers do. Synthetic taper tests must use stacked shrinking boxes.
 
+### ADR-015: Raft-fusion packing (gated body-over-raft nesting) (2026-08-08)
+
+**Context:**
+- Strict two-mask packing (raft∩raft only, ADR-013) measured ~no density gain: rafts hug outlines (0 flare), so raft-only regions are interior concavities unreachable without a body crossing the other full outline. The valuable move — body nesting over a neighbor's raft — was forbidden because a 2D shadow can't prove the body column has no low-Z material.
+- Physical audit of body-over-raft for a *gate-accepted* piece: its below-raft-top material at body pixels is its own raft + pillar feet — disposable, same class as the already-permitted raft-raft fusion. The residual hazard (model surface dipping below a neighbor's ~1 mm raft top on a piece that still carries an accepted raft) is rare on Lychee-style exports.
+
+**Decision:**
+- **Fused ⇔ body ≠ full** (gate-accepted cut), derived inside the packer by mask comparison — no new parameters, no CLI/improve changes. Fused pieces may nest bodies over each other's rafts and fuse raft-with-raft; their bodies never overlap (spacing intact). A non-fused piece keeps strict full-shadow collision both ways. Plate boundary always uses the full. Per-plate grids: fused bodies ∪, non-fused fulls ∪, all fulls ∪.
+- `support_cut_cap_mm` default 5.0 → **3.0**: costs nothing (all accepted corpus knees ≤ 1.25 mm), independently kills deep bogus knees, and guarantees fusion can never touch geometry above 3 mm. No `DETECTOR_VERSION` bump (cap is config, not part of the cache key; cached cuts unaffected).
+- Coarse-res collapse (thin raft ring vanishing under block-max downsample → coarse body == full → treated non-fused) is strictly conservative, preserving improve()'s coarse-legal ⇒ fine-legal invariant.
+
+**Alternatives Considered:**
+- Keep strict two-mask → provably safe but delivers no density; that safety is preserved per-piece for anything the gate rejects.
+- Per-pixel min-Z clearance mask ("underpass-safe") → converts the accepted risk into a proof; **tabled by explicit user decision (YAGNI), designated v2 hardening**.
+- Full Z-banded 2.5D collision → tabled with it.
+
+**Consequences:**
+- Accepted risk: fusion confined to z < 3 mm guaranteed, < ~1.25 mm in practice, on gate-verified pieces only; a model dipping below a neighbor's raft top is the silent failure case — revisit the clearance mask if it ever bites.
+- Spec: `docs/superpowers/specs/2026-08-08-raft-fusion-packing-design.md` (includes the permitted-overlap matrix).
+
 ## Usage Tips
 
 - Check this file **before** proposing an architectural change. If the proposal

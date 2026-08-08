@@ -207,7 +207,7 @@ def test_config_rejects_invalid_coarse_to_fine_knobs(tmp_path, key, match):
 def test_support_defaults(tmp_path):
     cfg = load_config(tmp_path / "missing.toml")
     assert cfg.support_aware is False
-    assert cfg.support_cut_cap_mm == 5.0
+    assert cfg.support_cut_cap_mm == 3.0  # ADR-015: hard ceiling on the fusion zone
 
 
 def test_support_knobs_load_from_toml(tmp_path):
