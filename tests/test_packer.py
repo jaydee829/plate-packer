@@ -457,6 +457,21 @@ def test_rotate_pair_body_subset_same_shape(angle):
     assert br.sum() < fr.sum()  # the hole survives
 
 
+@pytest.mark.parametrize("angle", [0.0, 30.0, 90.0, 150.0], ids=lambda a: f"deg{a:g}")
+def test_rotate_pair_offset_body_stays_subset(angle):
+    """ADR-015 legality leans on body_rot ⊆ full_rot: the fused branch checks
+    the candidate's FULL (not its body) against non-fused fulls, so a subset
+    break would silently open a collision hole. Pin the invariant for a body
+    with a smaller, OFF-CENTER bbox, where the integer paste offset between
+    the two independent crops carries the containment."""
+    full = np.ones((14, 11), np.uint8)
+    body = np.zeros((14, 11), np.uint8)
+    body[1:6, 2:5] = 1  # small off-center body -> different crop origin
+    fr, br, _aff = rotate_pair(full, body, angle)
+    assert br.shape == fr.shape
+    assert (br & ~fr).sum() == 0  # body_rot is a subset of full_rot
+
+
 # --- two-mask packing (Task 9) ---
 
 
