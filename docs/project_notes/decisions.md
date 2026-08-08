@@ -347,7 +347,7 @@ safety grid, and revisit `angle_cap` given safety_grid is on by default.
 **Decision:**
 - **Fused ⇔ body ≠ full** (gate-accepted cut), derived inside the packer by mask comparison — no new parameters, no CLI/improve changes. Fused pieces may nest bodies over each other's rafts and fuse raft-with-raft; their bodies never overlap (spacing intact). A non-fused piece keeps strict full-shadow collision both ways. Plate boundary always uses the full. Per-plate grids: fused bodies ∪, non-fused fulls ∪, all fulls ∪.
 - `support_cut_cap_mm` default 5.0 → **3.0**: costs nothing (all accepted corpus knees ≤ 1.25 mm), independently kills deep bogus knees, and guarantees fusion can never touch geometry above 3 mm. No `DETECTOR_VERSION` bump (cap is config, not part of the cache key; cached cuts unaffected).
-- Coarse-res collapse (thin raft ring vanishing under block-max downsample → coarse body == full → treated non-fused) is strictly conservative, preserving improve()'s coarse-legal ⇒ fine-legal invariant.
+- Coarse-res collapse (thin raft ring vanishing under block-max downsample → coarse body == full → treated non-fused) is strictly conservative, preserving improve()'s coarse-legal ⇒ fine-legal invariant. Converse holds by determinism (fine body == full ⇒ coarse equal), so coarse-fused ⇒ fine-fused — a nested coarse layout always scales to a legal fine layout.
 
 **Alternatives Considered:**
 - Keep strict two-mask → provably safe but delivers no density; that safety is preserved per-piece for anything the gate rejects.

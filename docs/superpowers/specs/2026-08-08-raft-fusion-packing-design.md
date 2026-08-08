@@ -66,7 +66,11 @@ Permitted-overlap matrix (F = fused, N = non-fused):
 Coarse-resolution note (improve loop): block-max downsampling can collapse a
 thin raft ring so coarse body == coarse full → the piece is treated as
 non-fused at coarse res. Strictly conservative, so "coarse-legal ⇒ fine-legal"
-still holds; the fine repack recovers the fusion freedom.
+still holds; the fine repack recovers the fusion freedom. The invariant also
+needs the converse direction, which holds by determinism: fine body == fine
+full block-maxes to equal coarse masks, so coarse-fused ⇒ fine-fused — a
+nested coarse layout can never scale to a fine layout where the nesting
+partner turns out non-fused.
 
 Contact scoring attracts to `hard_body | full_nf` plus the border (rafts are
 free-fire, not attractors).
