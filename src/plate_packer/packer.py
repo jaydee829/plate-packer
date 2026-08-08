@@ -147,19 +147,26 @@ def _best_spot(occupancy, variants, rings, choose, edge_weight=1.0):
     return best[1], best[2], best[3]
 
 
-def _best_spot_bounded(pieces_occ, border, variants, fullvars, rings, choose, edge_weight=1.0):
-    """Best (anchor, angle, contact) under two-mask legality: the body must not
-    overlap placed bodies (pieces_occ), and the full shadow must clear the plate
-    border/margins. body_rot and full_rot share a canvas (same shape), so the two
+def _best_spot_bounded(
+    body_occ, full_occ, border, variants, fullvars, rings, choose, edge_weight=1.0
+):
+    """Best (anchor, angle, contact) under two-mask legality. The only permitted
+    overlap is raft-on-raft: the candidate FULL must clear all placed BODIES, the
+    candidate BODY must clear all placed FULLS, and the FULL must clear the plate
+    border/margins. body_rot and full_rot share a canvas (same shape), so the
     legality maps AND directly."""
     best = None
     for angle, body in variants.items():
         full = fullvars[angle]
-        if body.shape[0] > pieces_occ.shape[0] or body.shape[1] > pieces_occ.shape[1]:
+        if body.shape[0] > body_occ.shape[0] or body.shape[1] > body_occ.shape[1]:
             continue
-        legal = legal_placement_map(pieces_occ, body) & legal_placement_map(border, full)
+        legal = (
+            legal_placement_map(body_occ, full)
+            & legal_placement_map(full_occ, body)
+            & legal_placement_map(border, full)
+        )
         contact = (
-            contact_map(pieces_occ | border, rings[angle], edge_weight)
+            contact_map(body_occ | border, rings[angle], edge_weight)
             if rings is not None
             else np.zeros(legal.shape)
         )
@@ -178,8 +185,9 @@ def _best_spot_bounded(pieces_occ, border, variants, fullvars, rings, choose, ed
 def _pack_bounded(
     pieces, border, prerotated, boundary, rings, choose, order, validate, edge_weight
 ):
-    """Two-mask greedy pack: bodies collide with bodies (rafts overlap freely),
-    full shadows stay on-plate. Plates track pieces-only occupancy."""
+    """Two-mask greedy pack: the only permitted overlap is raft-on-raft; a raft
+    may never land on another piece's body nor a body on another piece's raft.
+    Each plate tracks the union of placed bodies AND the union of placed fulls."""
     plate_shape = border.shape
     if validate:
         for i, fullvars in enumerate(boundary):
@@ -187,23 +195,33 @@ def _pack_bounded(
                 raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
     if order is None:
         order = sorted(range(len(pieces)), key=lambda i: int(pieces[i].sum()), reverse=True)
-    plates: list[np.ndarray] = []
+    body_plates: list[np.ndarray] = []
+    full_plates: list[np.ndarray] = []
     placements: list[Placement] = []
     for i in order:
         piece_rings = rings[i] if rings is not None else None
         target = plate_idx = None
-        for idx, pocc in enumerate(plates):
+        for idx in range(len(body_plates)):
             target = _best_spot_bounded(
-                pocc, border, prerotated[i], boundary[i], piece_rings, choose, edge_weight
+                body_plates[idx],
+                full_plates[idx],
+                border,
+                prerotated[i],
+                boundary[i],
+                piece_rings,
+                choose,
+                edge_weight,
             )
             if target:
                 plate_idx = idx
                 break
         if target is None:
-            plates.append(np.zeros(plate_shape, np.uint8))
-            plate_idx = len(plates) - 1
+            body_plates.append(np.zeros(plate_shape, np.uint8))
+            full_plates.append(np.zeros(plate_shape, np.uint8))
+            plate_idx = len(body_plates) - 1
             target = _best_spot_bounded(
-                plates[plate_idx],
+                body_plates[plate_idx],
+                full_plates[plate_idx],
                 border,
                 prerotated[i],
                 boundary[i],
@@ -215,7 +233,9 @@ def _pack_bounded(
             raise ValueError(f"piece {i} does not fit an empty plate at any rotation")
         (row, col), angle, score = target
         body = prerotated[i][angle]
-        plates[plate_idx][row : row + body.shape[0], col : col + body.shape[1]] |= body
+        full = boundary[i][angle]
+        body_plates[plate_idx][row : row + body.shape[0], col : col + body.shape[1]] |= body
+        full_plates[plate_idx][row : row + full.shape[0], col : col + full.shape[1]] |= full
         placements.append(Placement(i, plate_idx, row, col, angle, score))
     return sorted(placements, key=lambda p: p.piece)
 

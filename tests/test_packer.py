@@ -521,3 +521,47 @@ def test_boundary_empty_plate_fit_uses_full():
     b, f = _paired_variants(full, body, [0.0])
     with pytest.raises(ValueError, match="does not fit"):
         pack([body], (6, 6), prerotated=[b], boundary=[f], order=[0], validate=True)
+
+
+def test_boundary_raft_may_not_overlap_another_body():
+    # B: solid, no cut (body == full). A: cut, body is the RIGHT strip; raft = left.
+    B_full = np.ones((20, 20), np.uint8)
+    A_full = np.ones((20, 20), np.uint8)
+    A_body = np.zeros((20, 20), np.uint8)
+    A_body[:, 16:] = 1
+    plate = (20, 40)
+    prerot = [{0.0: B_full}, {0.0: A_body}]
+    bound = [{0.0: B_full}, {0.0: A_full}]
+    placements = pack(
+        [B_full, A_body], plate, prerotated=prerot, boundary=bound, order=[0, 1], validate=False
+    )
+    occ_body_B = np.zeros(plate, np.uint8)
+    occ_full_A = np.zeros(plate, np.uint8)
+    for pl in placements:
+        m = bound[pl.piece][0.0] if pl.piece == 1 else B_full  # A: full; B: body(==full)
+        tgt = occ_full_A if pl.piece == 1 else occ_body_B
+        tgt[pl.row : pl.row + 20, pl.col : pl.col + 20] |= m
+    assert (occ_full_A & occ_body_B).sum() == 0  # A's raft must not sit on B's body
+
+
+def test_boundary_body_may_not_overlap_another_raft():
+    # B: cut, body is the LEFT strip; raft = right. A: solid (body == full).
+    B_full = np.ones((20, 20), np.uint8)
+    B_body = np.zeros((20, 20), np.uint8)
+    B_body[:, :4] = 1
+    A_full = np.ones((20, 20), np.uint8)
+    plate = (20, 40)
+    prerot = [{0.0: B_body}, {0.0: A_full}]
+    bound = [{0.0: B_full}, {0.0: A_full}]
+    placements = pack(
+        [B_body, A_full], plate, prerotated=prerot, boundary=bound, order=[0, 1], validate=False
+    )
+    B_raft = B_full & ~B_body
+    occ_raft_B = np.zeros(plate, np.uint8)
+    occ_body_A = np.zeros(plate, np.uint8)
+    for pl in placements:
+        if pl.piece == 0:
+            occ_raft_B[pl.row : pl.row + 20, pl.col : pl.col + 20] |= B_raft
+        else:
+            occ_body_A[pl.row : pl.row + 20, pl.col : pl.col + 20] |= A_full
+    assert (occ_body_A & occ_raft_B).sum() == 0  # A's body must not sit on B's raft
