@@ -95,40 +95,42 @@ PILLARS = [(-7, -7), (-7, 0), (-7, 7), (0, -7), (0, 7), (7, -7), (7, 0), (7, 7)]
             2.0,
             id="raft-then-pillar-forest",
         ),
-        pytest.param(
-            _tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)),
-            0.0,
-            id="single-pillar-band-is-one-component-gate-rejects",
-        ),
-        pytest.param(
-            _tris(_box((30, 30), 0, 2), _box((10, 10), 2, 10)),
-            0.0,
-            id="plinth-wall-ring-gate-rejects",
-        ),
-        pytest.param(
-            _tris(*[_box((30 - 2 * k, 30 - 2 * k), k, k + 1) for k in range(8)]),
-            0.0,
-            id="staircase-taper-knee-at-cap-gate-rejects",
-        ),
-        pytest.param(
-            _tris(_box((20, 20), 0, 1), _box((10, 10), 5, 8)),
-            0.0,
-            id="floating-body-empty-band-gate-rejects",
-        ),
-        pytest.param(_tris(_box((1, 1), 0, 12)), 0.0, id="pillar-only-no-base"),
-        pytest.param(_tris(_box((20, 20), 0, 12)), 0.0, id="wide-solid-no-drop"),
-        pytest.param(
-            _tris(_box((20, 20), 0, 8), _box((1, 1), 8, 18)), 0.0, id="base-past-cap-window"
-        ),
-        pytest.param(
-            _tris(_box((2, 2), 0, 0.5), _box((1, 1), 0.5, 8), _box((20, 20), 8, 10)),
-            0.0,
-            id="tiny-foot-below-min-base-frac",
-        ),
     ],
 )
 def test_detect_base_cut(tris, expected):
     assert detect_base_cut(tris, 0.1, 5.0) == pytest.approx(expected, abs=BAND_MM)
+
+
+@pytest.mark.parametrize(
+    "tris",
+    [
+        pytest.param(
+            _tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)),
+            id="single-pillar-band-is-one-component-gate-rejects",
+        ),
+        pytest.param(
+            _tris(_box((30, 30), 0, 2), _box((10, 10), 2, 10)),
+            id="plinth-wall-ring-gate-rejects",
+        ),
+        pytest.param(
+            _tris(*[_box((30 - 2 * k, 30 - 2 * k), k, k + 1) for k in range(8)]),
+            id="staircase-taper-knee-at-cap-gate-rejects",
+        ),
+        pytest.param(
+            _tris(_box((20, 20), 0, 1), _box((10, 10), 5, 8)),
+            id="floating-body-empty-band-gate-rejects",
+        ),
+        pytest.param(_tris(_box((1, 1), 0, 12)), id="pillar-only-no-base"),
+        pytest.param(_tris(_box((20, 20), 0, 12)), id="wide-solid-no-drop"),
+        pytest.param(_tris(_box((20, 20), 0, 8), _box((1, 1), 8, 18)), id="base-past-cap-window"),
+        pytest.param(
+            _tris(_box((2, 2), 0, 0.5), _box((1, 1), 0.5, 8), _box((20, 20), 8, 10)),
+            id="tiny-foot-below-min-base-frac",
+        ),
+    ],
+)
+def test_detect_base_cut_rejects(tris):
+    assert detect_base_cut(tris, 0.1, 5.0) == 0.0
 
 
 @pytest.mark.parametrize(

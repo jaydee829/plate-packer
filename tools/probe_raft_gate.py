@@ -29,6 +29,7 @@ from plate_packer.footprint import (
 def probe(path: Path) -> tuple[float, float, int, str]:
     tris = np.asarray(load_piece_mesh(path).triangles)
     tris = tris[np.isfinite(tris).all(axis=(1, 2))]
+    # keep in sync with PackConfig.support_cut_cap_mm default
     knee = detect_base_cut(tris, DETECT_RES_MM, 5.0, gated=False)
     if knee <= 0:
         return 0.0, 0.0, 0, "no-knee"
@@ -61,7 +62,7 @@ def main() -> None:
         try:
             knee, dom, n_comp, verdict = probe(path)
         except Exception as e:
-            print(f"{path}\tERROR\t{e}", flush=True)
+            print(f"{path}\t-\t-\t-\tERROR\t{e}", flush=True)
             continue
         print(
             f"{path}\t{knee:.2f}\t{dom:.3f}\t{n_comp}\t{verdict}\t{time.perf_counter() - t0:.1f}",
