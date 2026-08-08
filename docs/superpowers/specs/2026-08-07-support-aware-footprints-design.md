@@ -132,17 +132,29 @@ gain is entirely *interior* concavity), but a raft that flares even slightly pas
 the body would overhang, so the packer enforces it explicitly rather than relying
 on that.
 
-**Collision model (support-aware):** a placement is legal iff
-- the **body** does not overlap already-placed **bodies** (rafts freely overlap —
-  the feature's whole point), **and**
-- the **full shadow** lies within the plate and clear of its dead margins.
+**Collision model (support-aware).** The *only* overlap ever permitted is
+**raft-on-raft** (two bases fuse — the feature's whole point). Everything else is
+a real collision: a body carries low-Z material (a support pillar reaching from
+near the plate up past the cut is a single triangle set kept in `model_body`), so
+one piece's body overlapping another's raft embeds real geometry in a base, just
+like body-on-body. So the packer tracks **two** occupancies per plate — the union
+of placed **bodies** and the union of placed **fulls** — and a placement is legal
+iff:
+- the candidate **full** clears all placed **bodies** (stops a raft, or a body,
+  landing on another piece's body), **and**
+- the candidate **body** clears all placed **fulls** (stops a body landing on
+  another piece's raft), **and**
+- the candidate **full** lies within the plate, clear of its dead margins.
+
+Only raft-vs-raft escapes both piece checks (raft ⊂ full but ⊄ body). Checking
+`full`-vs-`body` in one direction and `body`-vs-`full` in the other is required —
+a single `full`-vs-`body` check would miss body-on-raft.
 
 **Shared-canvas mechanic.** For each piece/angle, the body and full masks are
 rotated onto **one shared canvas** (`rotate_pair`: rotate the full mask with
 `rotate_mask`, then place the body on the full's cropped canvas), so `body_rot`
 and `full_rot` have **identical shape and anchor**. Legality is then a plain
-same-shape AND of two `legal_placement_map` calls — `legal_placement_map(pieces,
-body_rot) & legal_placement_map(plate_border, full_rot)` — with no crop-offset
+same-shape AND of the three `legal_placement_map` calls above — with no crop-offset
 arithmetic anywhere. Placement `(row, col, angle)` lives in this shared (full)
 frame. Block-max downsampling to the coarse resolution keeps both masks the same
 shape, so the coarse phase ANDs identically. The empty-plate fit check (ADR-004)
@@ -247,9 +259,14 @@ Parametrized, atomic — one named case per input, per the global rule.
 
 **Unit — two-mask packing:**
 - Rafts overlap: two pieces whose bodies fit disjoint but whose full shadows
-  overlap → both placed on one plate (body-vs-body legality only).
+  overlap → both placed on one plate.
+- **Raft-on-body forbidden (distinct pieces, different cuts):** a solid no-cut
+  piece B beside a cut piece A whose body sits at one edge of its full — A's raft
+  must not land on B's body (`full_A ∩ body_B = ∅` at the placements). This is the
+  case identical-geometry fixtures cannot expose.
+- Body-on-raft forbidden: the symmetric case (A's body must clear B's raft).
 - Plate boundary: a piece whose body fits flush at the edge but whose full shadow
-  would overhang is pushed inward (full-vs-border legality) — no off-plate raft.
+  would overhang is pushed inward — no off-plate raft.
 - Empty-plate fit uses the full mask (a piece whose full exceeds the plate is
   rejected even if its body fits).
 
