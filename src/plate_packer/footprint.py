@@ -16,6 +16,7 @@ MIN_REDUCTION = 0.05  # min footprint drop (fraction) worth excluding a base for
 FLAT_EPS = 0.01  # plateau tolerance (fraction of footprint) for the knee
 DETECT_RES_MM = 0.2  # coarse raster res for detection (area ratios are scale-tolerant)
 DETECTOR_VERSION = 1  # bump when any detector constant changes (invalidates body masks)
+RAFT_BAND_DOMINANCE_MAX = 0.35  # accept a cut iff largest band component <= 35% of band
 
 
 def _raster(tri_px: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -27,7 +28,27 @@ def _raster(tri_px: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     return canvas
 
 
-def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
+def _band_dominance(z, tri_px, shape, z0, cut_mm) -> float:
+    """Largest-connected-component share of the straddle band just above the cut.
+
+    Rasterizes the triangles crossing the plane z0 + cut_mm + BAND_MM (outlines,
+    since meshes are hollow shells): a support forest is many small pillar rings
+    (low share), a model wall is one large ring (high share). Corpus-calibrated:
+    true rafts 0.018-0.208, bogus cuts 0.556-1.0 (see 2026-08-08 spec). Returns
+    1.0 when nothing straddles the plane -- no support evidence, caller rejects."""
+    plane = z0 + cut_mm + BAND_MM
+    straddle = (z.min(axis=1) < plane) & (z.max(axis=1) > plane)
+    if not straddle.any():
+        return 1.0
+    band = _raster(tri_px[straddle], shape)
+    if not band.any():
+        return 1.0
+    _n, _labels, comp_stats, _ = cv2.connectedComponentsWithStats(band, connectivity=8)
+    sizes = comp_stats[1:, cv2.CC_STAT_AREA]  # row 0 is background
+    return float(sizes.max() / sizes.sum())
+
+
+def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float, *, gated: bool = True) -> float:
     """Offset above the mesh base below which geometry is raft/support base.
 
     Detected by the footprint-area knee: as the cut depth d rises, the model-body
@@ -38,6 +59,11 @@ def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     that top-reach map. Returns 0.0 (no cut, the safe default) when the footprint
     never drops by MIN_REDUCTION inside [z0, z0 + cap_mm] -- so a raftless model, a
     wide solid box, or a base taller than the cap all leave model_body == full.
+
+    A knee is then ACCEPTED only if the geometry just above it looks like a
+    support forest (band dominance <= RAFT_BAND_DOMINANCE_MAX); model walls,
+    plinths, and taper false-knees return 0.0. gated=False skips the gate and
+    returns the raw knee (probe/diagnostic use).
     """
     if cap_mm <= 0 or len(tris) == 0:
         return 0.0
@@ -77,7 +103,10 @@ def detect_base_cut(tris: np.ndarray, res_mm: float, cap_mm: float) -> float:
     thresh = a_min + FLAT_EPS * a_full
     for i in range(n_bands + 1):
         if areas[i] <= thresh:  # first depth on the plateau = the knee
-            return float(i * BAND_MM)
+            cut = float(i * BAND_MM)
+            if not gated or _band_dominance(z, tri_px, shape, z0, cut) <= RAFT_BAND_DOMINANCE_MAX:
+                return cut
+            return 0.0
     return 0.0
 
 

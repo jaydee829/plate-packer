@@ -274,16 +274,21 @@ def test_pack_cli_accepts_coarse_res_and_beam_options(tmp_path, monkeypatch):
 
 
 def _fused_piece():
-    """Solid raft (full outline) + a narrower body with the SAME outer bbox but a
-    hollow centre — realistic: outer extent matches, interior differs. Rafts of
-    neighbours overlap; nothing hangs off the plate."""
-    raft = trimesh.creation.box(extents=(20, 20, 2))
-    raft.apply_translation([0, 0, 1])
-    left = trimesh.creation.box(extents=(4, 20, 20))
-    left.apply_translation([-8, 0, 12])
-    right = trimesh.creation.box(extents=(4, 20, 20))
-    right.apply_translation([8, 0, 12])
-    return trimesh.util.concatenate([raft, left, right])
+    """Solid raft (full outline) + 8 support pillars + a narrower body slab —
+    realistic: outer extent matches the raft, body shadow is smaller. Rafts of
+    neighbours overlap; nothing hangs off the plate. The pillar forest keeps
+    the band-dominance gate accepting the cut (8 rings, dominance 1/8)."""
+    pillars = [(-7, -7), (-7, 0), (-7, 7), (0, -7), (0, 7), (7, -7), (7, 0), (7, 7)]
+    parts = [trimesh.creation.box(extents=(20, 20, 2))]
+    parts[0].apply_translation([0, 0, 1])
+    for x, y in pillars:
+        p = trimesh.creation.box(extents=(1, 1, 6))
+        p.apply_translation([x, y, 5])
+        parts.append(p)
+    body = trimesh.creation.box(extents=(10, 10, 4))
+    body.apply_translation([0, 0, 10])
+    parts.append(body)
+    return trimesh.util.concatenate(parts)
 
 
 def _write_pieces(stl_dir, n):

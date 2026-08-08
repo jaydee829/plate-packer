@@ -104,28 +104,20 @@ def test_detect_base_cut(tris, expected):
 @pytest.mark.parametrize(
     ("tris", "expected_knee"),
     [
-        pytest.param(
-            _tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)), 2.0, id="single-pillar"
-        ),
-        pytest.param(
-            _tris(_box((30, 30), 0, 2), _box((10, 10), 2, 10)), 2.0, id="plinth"
-        ),
+        pytest.param(_tris(_box((20, 20), 0, 2), _box((1, 1), 2, 12)), 2.0, id="single-pillar"),
+        pytest.param(_tris(_box((30, 30), 0, 2), _box((10, 10), 2, 10)), 2.0, id="plinth"),
         pytest.param(
             _tris(*[_box((30 - 2 * k, 30 - 2 * k), k, k + 1) for k in range(8)]),
             5.0,
             id="staircase-taper",
         ),
-        pytest.param(
-            _tris(_box((20, 20), 0, 1), _box((10, 10), 5, 8)), 1.0, id="floating-body"
-        ),
+        pytest.param(_tris(_box((20, 20), 0, 1), _box((10, 10), 5, 8)), 1.0, id="floating-body"),
     ],
 )
 def test_detect_base_cut_ungated_still_finds_knee(tris, expected_knee):
     """gated=False exposes the raw area-knee: proves the gate (not MIN_REDUCTION)
     is what rejects these shapes in test_detect_base_cut above."""
-    assert detect_base_cut(tris, 0.1, 5.0, gated=False) == pytest.approx(
-        expected_knee, abs=BAND_MM
-    )
+    assert detect_base_cut(tris, 0.1, 5.0, gated=False) == pytest.approx(expected_knee, abs=BAND_MM)
 ```
 
 Update `test_extract_footprints_body_subset_of_full_and_smaller` (line 118) — its single-pillar mesh is now gate-rejected, so give it the forest (cut stays 2.0; verified at the internal `DETECT_RES_MM=0.2` too):
@@ -398,8 +390,7 @@ def main() -> None:
             print(f"{path}\tERROR\t{e}", flush=True)
             continue
         print(
-            f"{path}\t{knee:.2f}\t{dom:.3f}\t{n_comp}\t{verdict}"
-            f"\t{time.perf_counter() - t0:.1f}",
+            f"{path}\t{knee:.2f}\t{dom:.3f}\t{n_comp}\t{verdict}\t{time.perf_counter() - t0:.1f}",
             flush=True,
         )
 
